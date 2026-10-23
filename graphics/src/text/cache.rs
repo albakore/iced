@@ -184,11 +184,13 @@ mod tests {
     fn reshapes_text_when_its_font_is_loaded() {
         // A font system that can shape, but does not yet know about Fira Sans.
         let mut db = cosmic_text::fontdb::Database::new();
-        let _ = db.load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(
-            ICED_ICONS.to_vec(),
-        )));
-        let mut font_system =
-            cosmic_text::FontSystem::new_with_locale_and_db("en-US".to_owned(), db);
+        let _ = db.load_font_source(cosmic_text::fontdb::Source::Binary(
+            Arc::new(ICED_ICONS.to_vec()),
+        ));
+        let mut font_system = cosmic_text::FontSystem::new_with_locale_and_db(
+            "en-US".to_owned(),
+            db,
+        );
         let mut cache = Cache::new();
         let version = text::Version::default();
 
@@ -205,11 +207,9 @@ mod tests {
         );
 
         // Loading Fira Sans advances the font system version.
-        let _ = font_system
-            .db_mut()
-            .load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(
-                FIRA_SANS.to_vec(),
-            )));
+        let _ = font_system.db_mut().load_font_source(
+            cosmic_text::fontdb::Source::Binary(Arc::new(FIRA_SANS.to_vec())),
+        );
         let version = text::Version(version.0 + 1);
 
         // The text is now reshaped against Fira Sans, so its buffer changes.

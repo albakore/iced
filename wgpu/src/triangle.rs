@@ -414,8 +414,10 @@ impl Layer {
                 clip_bounds
                     .snap()
                     .map(|snapped_bounds| {
-                        Point::new(snapped_bounds.x as f32, snapped_bounds.y as f32)
-                            - clip_bounds.position()
+                        Point::new(
+                            snapped_bounds.x as f32,
+                            snapped_bounds.y as f32,
+                        ) - clip_bounds.position()
                     })
                     .unwrap_or(Vector::ZERO)
             } else {

@@ -416,7 +416,8 @@ impl geometry::frame::Backend for Frame {
     fn paste(&mut self, mut frame: Frame) {
         // Drain all previous buffers into meshes before pasting.
         // Otherwise the would be added after in `into_geometry`.
-        self.meshes.extend(self.buffers.drain_meshes(self.clip_bounds));
+        self.meshes
+            .extend(self.buffers.drain_meshes(self.clip_bounds));
 
         self.meshes.extend(frame.meshes);
         self.meshes
@@ -553,32 +554,33 @@ impl BufferStack {
         }
     }
 
-    fn drain_meshes(&mut self, clip_bounds: Rectangle) -> impl Iterator<Item = Mesh> {
-        self.stack
-            .drain(..)
-            .filter_map(move |buffer| match buffer {
-                Buffer::Solid(buffer) if !buffer.indices.is_empty() => {
-                    Some(Mesh::Solid {
-                        buffers: mesh::Indexed {
-                            vertices: buffer.vertices,
-                            indices: buffer.indices,
-                        },
-                        clip_bounds,
-                        transformation: Transformation::IDENTITY,
-                    })
-                }
-                Buffer::Gradient(buffer) if !buffer.indices.is_empty() => {
-                    Some(Mesh::Gradient {
-                        buffers: mesh::Indexed {
-                            vertices: buffer.vertices,
-                            indices: buffer.indices,
-                        },
-                        clip_bounds,
-                        transformation: Transformation::IDENTITY,
-                    })
-                }
-                _ => None,
-            })
+    fn drain_meshes(
+        &mut self,
+        clip_bounds: Rectangle,
+    ) -> impl Iterator<Item = Mesh> {
+        self.stack.drain(..).filter_map(move |buffer| match buffer {
+            Buffer::Solid(buffer) if !buffer.indices.is_empty() => {
+                Some(Mesh::Solid {
+                    buffers: mesh::Indexed {
+                        vertices: buffer.vertices,
+                        indices: buffer.indices,
+                    },
+                    clip_bounds,
+                    transformation: Transformation::IDENTITY,
+                })
+            }
+            Buffer::Gradient(buffer) if !buffer.indices.is_empty() => {
+                Some(Mesh::Gradient {
+                    buffers: mesh::Indexed {
+                        vertices: buffer.vertices,
+                        indices: buffer.indices,
+                    },
+                    clip_bounds,
+                    transformation: Transformation::IDENTITY,
+                })
+            }
+            _ => None,
+        })
     }
 }
 

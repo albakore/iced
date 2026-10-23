@@ -222,7 +222,10 @@ where
     /// This closure will only be called when the [`TextInput`] is actually focused and the enter key is pressed and,
     /// therefore, this method is useful to reduce overhead if creating the resulting
     /// message is slow.
-    pub fn on_submit_with(mut self, on_submit: impl Fn() -> Message + 'a) -> Self {
+    pub fn on_submit_with(
+        mut self,
+        on_submit: impl Fn() -> Message + 'a,
+    ) -> Self {
         self.on_submit = Some(OnSubmit::Closure(Box::new(on_submit)));
         self
     }
@@ -1737,7 +1740,11 @@ fn grapheme_offset_from_char_offset(value: &str, char_offset: usize) -> usize {
         .nth(char_offset)
         .map_or(value.len(), |(index, _)| index);
 
-    unicode_segmentation::UnicodeSegmentation::graphemes(&value[..byte_offset], true).count()
+    unicode_segmentation::UnicodeSegmentation::graphemes(
+        &value[..byte_offset],
+        true,
+    )
+    .count()
 }
 
 fn replace_paragraph<Renderer>(

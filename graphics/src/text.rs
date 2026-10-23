@@ -106,9 +106,12 @@ impl Text {
                     alignment::Vertical::Bottom => bounds.y - height,
                 };
 
-                Rectangle::new(Point::new(bounds.x, y), Size::new(bounds.width, height))
-                    .expand(1.0)
-                    .intersection(clip_bounds)
+                Rectangle::new(
+                    Point::new(bounds.x, y),
+                    Size::new(bounds.width, height),
+                )
+                .expand(1.0)
+                .intersection(clip_bounds)
             }
             Text::Raw { raw, .. } => Some(raw.clip_bounds),
         }
@@ -206,17 +209,18 @@ mod tests {
             height: 80.0,
         };
 
-        let paragraph = paragraph::Paragraph::with_text(crate::core::text::Text {
-            content: "Centered",
-            bounds: layout_bounds.size(),
-            size: Pixels(16.0),
-            line_height: LineHeight::Absolute(Pixels(20.0)),
-            font: Font::DEFAULT,
-            align_x: Alignment::Center,
-            align_y: alignment::Vertical::Center,
-            shaping: Shaping::Basic,
-            wrapping: Wrapping::default(),
-        });
+        let paragraph =
+            paragraph::Paragraph::with_text(crate::core::text::Text {
+                content: "Centered",
+                bounds: layout_bounds.size(),
+                size: Pixels(16.0),
+                line_height: LineHeight::Absolute(Pixels(20.0)),
+                font: Font::DEFAULT,
+                align_x: Alignment::Center,
+                align_y: alignment::Vertical::Center,
+                shaping: Shaping::Basic,
+                wrapping: Wrapping::default(),
+            });
 
         let anchor = layout_bounds.anchor(
             paragraph.min_bounds(),

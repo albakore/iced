@@ -121,7 +121,8 @@ impl Pipeline {
             align_x,
         };
 
-        let (_, entry) = self.cache.get_mut().allocate(font_system, key, version);
+        let (_, entry) =
+            self.cache.get_mut().allocate(font_system, key, version);
 
         let width = entry.min_bounds.width;
         let height = entry.min_bounds.height;

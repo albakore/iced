@@ -186,7 +186,9 @@ where
                     return;
                 }
 
-                if !(state.first_finger.is_some() ^ state.second_finger.is_some()) {
+                if !(state.first_finger.is_some()
+                    ^ state.second_finger.is_some())
+                {
                     state.hold_delay = None;
                     state.holding_finger = false;
                     return;
@@ -317,7 +319,9 @@ where
                 let state = tree.state.downcast_mut::<State>();
                 state.register_finger(*id, *position);
                 state.hold_delay = Some(time::Instant::now() + self.hold_delay);
-                shell.request_redraw_at(window::RedrawRequest::At(state.hold_delay.unwrap()));
+                shell.request_redraw_at(window::RedrawRequest::At(
+                    state.hold_delay.unwrap(),
+                ));
             }
             Event::Touch(touch::Event::FingerLifted { id, .. })
             | Event::Touch(touch::Event::FingerLost { id, .. }) => {
@@ -325,7 +329,8 @@ where
                 state.remove_finger(*id);
                 state.holding_finger = false;
 
-                if state.first_finger.is_none() && state.second_finger.is_none() {
+                if state.first_finger.is_none() && state.second_finger.is_none()
+                {
                     state.pinch_start_distance = None;
                     state.pinch_anchor = None;
                 }
@@ -348,21 +353,26 @@ where
                         bounds.size(),
                         self.content_fit,
                     );
-                    let hidden_width = (scaled_size.width - bounds.width / 2.0).max(0.0).round();
+                    let hidden_width = (scaled_size.width - bounds.width / 2.0)
+                        .max(0.0)
+                        .round();
 
                     let hidden_height =
-                        ((scaled_size.height - bounds.height).max(0.0) / 2.0).round();
+                        ((scaled_size.height - bounds.height).max(0.0) / 2.0)
+                            .round();
 
                     let delta = *position - origin;
 
                     let x = if bounds.width < scaled_size.width {
-                        (state.starting_offset.x - delta.x).clamp(-hidden_width, hidden_width)
+                        (state.starting_offset.x - delta.x)
+                            .clamp(-hidden_width, hidden_width)
                     } else {
                         0.0
                     };
 
                     let y = if bounds.height < scaled_size.height {
-                        (state.starting_offset.y - delta.y).clamp(-hidden_height, hidden_height)
+                        (state.starting_offset.y - delta.y)
+                            .clamp(-hidden_height, hidden_height)
                     } else {
                         0.0
                     };
@@ -392,8 +402,10 @@ where
                     return;
                 };
 
-                let start_distance = state.pinch_start_distance.unwrap_or(new_distance);
-                let next_scale = (state.pinch_start_scale * (new_distance / start_distance))
+                let start_distance =
+                    state.pinch_start_distance.unwrap_or(new_distance);
+                let next_scale = (state.pinch_start_scale
+                    * (new_distance / start_distance))
                     .clamp(self.min_scale, self.max_scale);
 
                 let scale_factor = next_scale / state.pinch_start_scale;
@@ -407,7 +419,8 @@ where
                     self.content_fit,
                 );
 
-                let pinch_anchor = state.pinch_anchor.unwrap_or(bounds.center());
+                let pinch_anchor =
+                    state.pinch_anchor.unwrap_or(bounds.center());
                 let pinch_to_center = pinch_anchor - bounds.center();
                 let adjustment = pinch_to_center * (scale_factor - 1.0)
                     + state.pinch_start_offset * (scale_factor - 1.0);
@@ -605,7 +618,11 @@ impl State {
     }
 
     /// Updates the position of a finger
-    fn update_finger_position(&mut self, finger: touch::Finger, position: Point) {
+    fn update_finger_position(
+        &mut self,
+        finger: touch::Finger,
+        position: Point,
+    ) {
         if self.first_finger.is_some_and(|value| value == finger) {
             self.first_finger_last_position = Some(position);
             return;

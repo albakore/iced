@@ -531,7 +531,9 @@ pub fn monitor_size(id: Id) -> Task<Option<Size>> {
 /// window flush with the current monitor's edge in a multi-monitor
 /// setup, where `(0, 0)` is the primary monitor.
 pub fn monitor_position(id: Id) -> Task<Option<Point>> {
-    task::oneshot(move |channel| crate::Action::Window(Action::GetMonitorPosition(id, channel)))
+    task::oneshot(move |channel| {
+        crate::Action::Window(Action::GetMonitorPosition(id, channel))
+    })
 }
 
 /// Sets whether the system can automatically organize windows into tabs.

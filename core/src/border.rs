@@ -320,8 +320,12 @@ impl Interpolable for Radius {
         Self {
             top_left: self.top_left.interpolated(other.top_left, ratio),
             top_right: self.top_right.interpolated(other.top_right, ratio),
-            bottom_left: self.bottom_left.interpolated(other.bottom_left, ratio),
-            bottom_right: self.bottom_right.interpolated(other.bottom_right, ratio),
+            bottom_left: self
+                .bottom_left
+                .interpolated(other.bottom_left, ratio),
+            bottom_right: self
+                .bottom_right
+                .interpolated(other.bottom_right, ratio),
         }
     }
 }

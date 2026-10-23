@@ -273,7 +273,10 @@ impl Snapshot {
     ///
     /// If the PNG image does not exist, it will be created by the [`Snapshot`] for future
     /// testing and `None` will be returned.
-    pub fn image_diff_score(&self, path: impl AsRef<Path>) -> Result<Option<f64>, Error> {
+    pub fn image_diff_score(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<f64>, Error> {
         let path = self.path(path, "png");
 
         if path.exists() {
@@ -288,12 +291,16 @@ impl Snapshot {
             writer.write_image_data(&self.screenshot.rgba)?;
             writer.finish()?;
 
-            let image1 = image::load_from_memory_with_format(&image1, image::ImageFormat::Png)?;
+            let image1 = image::load_from_memory_with_format(
+                &image1,
+                image::ImageFormat::Png,
+            )?;
             let image2 = image::open(&path)?;
 
-            let Ok(result) =
-                image_compare::rgba_hybrid_compare(&image1.into_rgba8(), &image2.into_rgba8())
-            else {
+            let Ok(result) = image_compare::rgba_hybrid_compare(
+                &image1.into_rgba8(),
+                &image2.into_rgba8(),
+            ) else {
                 // Images had different dimensions
                 return Ok(Some(0.0));
             };
