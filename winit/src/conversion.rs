@@ -125,6 +125,10 @@ pub fn window_attributes(
             attributes = attributes
                 .with_system_backdrop(BackdropType::TransientWindow);
         }
+
+        attributes = attributes.with_taskbar_icon(
+            settings.platform_specific.taskbar_icon.and_then(icon),
+        );
     }
 
     #[cfg(target_os = "macos")]
