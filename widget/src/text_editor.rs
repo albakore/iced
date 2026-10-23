@@ -1343,7 +1343,7 @@ impl<Message> Update<Message> {
                     }
                     _ => None,
                 },
-                mouse::Event::WheelScrolled { delta }
+                mouse::Event::WheelScrolled { delta, .. }
                     if cursor.is_over(bounds) =>
                 {
                     Some(Update::Scroll(match delta {

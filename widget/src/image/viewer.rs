@@ -197,7 +197,7 @@ where
                 state.starting_offset = state.current_offset;
                 state.holding_finger = true;
             }
-            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+            Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {
                 let Some(cursor_position) = cursor.position_over(bounds) else {
                     return;
                 };

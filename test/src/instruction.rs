@@ -60,7 +60,7 @@ impl Interaction {
                     button: *button,
                     target: None,
                 },
-                mouse::Event::WheelScrolled { delta } => {
+                mouse::Event::WheelScrolled { delta, .. } => {
                     Mouse::Scroll { delta: *delta }
                 }
                 _ => None?,
@@ -273,8 +273,12 @@ impl Interaction {
         let mouse_release =
             |button| Event::Mouse(mouse::Event::ButtonReleased(button));
 
-        let mouse_scroll =
-            |delta| Event::Mouse(mouse::Event::WheelScrolled { delta });
+        let mouse_scroll = |delta| {
+            Event::Mouse(mouse::Event::WheelScrolled {
+                delta,
+                phase: mouse::ScrollPhase::Moved,
+            })
+        };
 
         let key_press = |key| simulator::press_key(key, None);
 

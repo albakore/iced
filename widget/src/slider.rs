@@ -385,7 +385,7 @@ where
                         shell.capture_event();
                     }
                 }
-                Event::Mouse(mouse::Event::WheelScrolled { delta })
+                Event::Mouse(mouse::Event::WheelScrolled { delta, .. })
                     if state.keyboard_modifiers.control() =>
                 {
                     if cursor.is_over(layout.bounds()) {
