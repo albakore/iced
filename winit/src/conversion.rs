@@ -647,6 +647,7 @@ pub fn mouse_interaction(
         Interaction::AllScroll => winit::window::CursorIcon::AllScroll,
         Interaction::ZoomIn => winit::window::CursorIcon::ZoomIn,
         Interaction::ZoomOut => winit::window::CursorIcon::ZoomOut,
+        Interaction::Custom(_) => return None,
     };
 
     Some(icon)
