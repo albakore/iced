@@ -35,6 +35,7 @@ impl Tiger {
                     } else {
                         None
                     },
+                    ..svg::Style::default()
                 });
 
         let apply_color_filter = checkbox(self.apply_color_filter)

@@ -72,7 +72,11 @@ impl Example {
                             window::Position::Default,
                             |last_position| {
                                 window::Position::Specific(
-                                    last_position + Vector::new(20.0, 20.0),
+                                    window::PositionOnMonitor {
+                                        position: last_position.position
+                                            + Vector::new(20.0, 20.0),
+                                        ..last_position
+                                    },
                                 )
                             },
                         );

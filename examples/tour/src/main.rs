@@ -249,19 +249,13 @@ impl Tour {
     }
 
     fn rows_and_columns(&self) -> Column<'_, Message> {
-        let row_radio = radio(
-            "Row",
-            Layout::Row,
-            Some(self.layout),
-            Message::LayoutChanged,
-        );
+        let row_radio =
+            radio(Layout::Row, Some(self.layout), Message::LayoutChanged)
+                .label("Row");
 
-        let column_radio = radio(
-            "Column",
-            Layout::Column,
-            Some(self.layout),
-            Message::LayoutChanged,
-        );
+        let column_radio =
+            radio(Layout::Column, Some(self.layout), Message::LayoutChanged)
+                .label("Column");
 
         let layout_section: Element<_> = match self.layout {
             Layout::Row => {
@@ -339,10 +333,10 @@ impl Tour {
                     .map(|language| {
                         radio(
                             language,
-                            language,
                             self.language,
                             Message::LanguageSelected,
                         )
+                        .label(String::from(language))
                     })
                     .map(Element::from)
             )
