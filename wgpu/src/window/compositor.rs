@@ -37,6 +37,17 @@ pub enum Error {
     RequestDeviceFailed(Vec<(wgpu::Limits, wgpu::RequestDeviceError)>),
 }
 
+/// The optional features to request, only when the adapter supports them.
+fn required_features(adapter_features: wgpu::Features) -> wgpu::Features {
+    let mut required_features = wgpu::Features::empty();
+
+    if adapter_features.contains(wgpu::Features::TEXTURE_FORMAT_NV12) {
+        required_features |= wgpu::Features::TEXTURE_FORMAT_NV12;
+    }
+
+    required_features
+}
+
 impl From<Error> for graphics::Error {
     fn from(error: Error) -> Self {
         Self::GraphicsAdapterNotFound {
@@ -178,6 +189,10 @@ impl Compositor {
             ..limits
         });
 
+        // Request TEXTURE_FORMAT_NV12 only if the adapter supports it
+        // (e.g., it is not available in WebGL2).
+        let required_features = required_features(adapter.features());
+
         let mut errors = Vec::new();
 
         for required_limits in limits {
@@ -186,7 +201,7 @@ impl Compositor {
                     label: Some(
                         "iced_wgpu::window::compositor device descriptor",
                     ),
-                    required_features: wgpu::Features::empty(),
+                    required_features,
                     required_limits: required_limits.clone(),
                     memory_hints: wgpu::MemoryHints::MemoryUsage,
                     trace: wgpu::Trace::Off,
