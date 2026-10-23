@@ -1,4 +1,6 @@
 //! Configure a renderer.
+pub use crate::core::settings::Memory;
+use crate::core::settings::{PowerPreference, PresentMode};
 use crate::core::{Font, Pixels};
 use crate::graphics::{self, Antialiasing};
 
@@ -33,6 +35,18 @@ pub struct Settings {
     ///
     /// By default, it is set to `4`.
     pub max_bind_groups: u32,
+
+    /// pyzed: which GPU to prefer when there are several.
+    pub power_preference: wgpu::PowerPreference,
+
+    /// pyzed: whether GPU memory is allocated for speed or for a small footprint.
+    pub memory: Memory,
+
+    /// pyzed: the frames the GPU may queue ahead of the screen (1 to 3).
+    pub frame_latency: u32,
+
+    /// pyzed: a part of the name of the GPU to use, matched without case.
+    pub adapter: Option<&'static str>,
 }
 
 impl Default for Settings {
@@ -44,22 +58,45 @@ impl Default for Settings {
             default_text_size: Pixels(16.0),
             antialiasing: None,
             max_bind_groups: 4,
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            memory: Memory::Low,
+            frame_latency: 1,
+            adapter: None,
         }
     }
 }
 
 impl From<graphics::Settings> for Settings {
     fn from(settings: graphics::Settings) -> Self {
+        let rendering = settings.rendering;
+
         Self {
-            present_mode: if settings.vsync {
-                wgpu::PresentMode::AutoVsync
-            } else {
-                wgpu::PresentMode::AutoNoVsync
+            present_mode: match rendering.present_mode {
+                PresentMode::Auto if settings.vsync => {
+                    wgpu::PresentMode::AutoVsync
+                }
+                PresentMode::Auto | PresentMode::NoVsync => {
+                    wgpu::PresentMode::AutoNoVsync
+                }
+                PresentMode::Vsync => wgpu::PresentMode::AutoVsync,
+                PresentMode::Fifo => wgpu::PresentMode::Fifo,
+                PresentMode::FifoRelaxed => wgpu::PresentMode::FifoRelaxed,
+                PresentMode::Mailbox => wgpu::PresentMode::Mailbox,
+                PresentMode::Immediate => wgpu::PresentMode::Immediate,
             },
             default_font: settings.default_font,
             default_text_size: settings.default_text_size,
             antialiasing: settings.antialiasing,
             max_bind_groups: settings.max_bind_groups,
+            power_preference: match rendering.power {
+                PowerPreference::HighPerformance => {
+                    wgpu::PowerPreference::HighPerformance
+                }
+                PowerPreference::LowPower => wgpu::PowerPreference::LowPower,
+            },
+            memory: rendering.memory,
+            frame_latency: u32::from(rendering.frame_latency.clamp(1, 3)),
+            adapter: rendering.adapter,
             ..Settings::default()
         }
     }

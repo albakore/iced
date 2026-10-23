@@ -530,6 +530,7 @@ pub use crate::core::border;
 pub use crate::core::color;
 pub use crate::core::gradient;
 pub use crate::core::padding;
+pub use crate::core::settings;
 pub use crate::core::theme;
 pub use crate::core::{
     Alignment, Animation, Background, Border, Color, ContentFit, Degrees, Em,

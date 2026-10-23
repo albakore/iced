@@ -169,6 +169,18 @@ impl<P: Program> Daemon<P> {
         }
     }
 
+    /// pyzed: sets the [`Settings::rendering`] of the [`Daemon`]: antialiasing samples,
+    /// presentation, GPU and frame rate limits.
+    pub fn rendering(self, rendering: crate::settings::Rendering) -> Self {
+        Self {
+            settings: Settings {
+                rendering,
+                ..self.settings
+            },
+            ..self
+        }
+    }
+
     /// Sets the default [`Font`] of the [`Daemon`].
     pub fn default_font(self, default_font: Font) -> Self {
         Self {

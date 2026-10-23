@@ -107,16 +107,25 @@ impl Compositor {
             .and_then(|window| instance.create_surface(window).ok());
 
         let adapter_options = wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::from_env()
-                .unwrap_or(wgpu::PowerPreference::HighPerformance),
+            power_preference: settings.power_preference,
             compatible_surface: compatible_surface.as_ref(),
             force_fallback_adapter: false,
         };
 
-        let adapter =
-            instance.request_adapter(&adapter_options).await.map_err(
+        // pyzed: a GPU named in the settings (or `WGPU_ADAPTER_NAME`) wins over the preference
+        let named = named_adapter(
+            &instance,
+            settings.backends,
+            settings.adapter,
+            compatible_surface.as_ref(),
+        );
+
+        let adapter = match named {
+            Some(adapter) => adapter,
+            None => instance.request_adapter(&adapter_options).await.map_err(
                 |_error| Error::NoAdapterFound(format!("{adapter_options:?}")),
-            )?;
+            )?,
+        };
 
         log::info!("Selected: {:#?}", adapter.get_info());
 
@@ -203,7 +212,12 @@ impl Compositor {
                     ),
                     required_features,
                     required_limits: required_limits.clone(),
-                    memory_hints: wgpu::MemoryHints::MemoryUsage,
+                    memory_hints: match settings.memory {
+                        settings::Memory::Low => wgpu::MemoryHints::MemoryUsage,
+                        settings::Memory::Performance => {
+                            wgpu::MemoryHints::Performance
+                        }
+                    },
                     trace: wgpu::Trace::Off,
                     experimental_features: wgpu::ExperimentalFeatures::disabled(
                     ),
@@ -237,6 +251,62 @@ impl Compositor {
         }
 
         Err(Error::RequestDeviceFailed(errors))
+    }
+}
+
+/// pyzed: the first adapter whose name contains `name` (without case) and that can draw on
+/// `surface`.
+#[cfg(not(target_arch = "wasm32"))]
+fn named_adapter(
+    instance: &wgpu::Instance,
+    backends: wgpu::Backends,
+    name: Option<&str>,
+    surface: Option<&wgpu::Surface<'_>>,
+) -> Option<wgpu::Adapter> {
+    let name = name?.to_lowercase();
+
+    let adapter =
+        instance
+            .enumerate_adapters(backends)
+            .into_iter()
+            .find(|adapter| {
+                adapter.get_info().name.to_lowercase().contains(&name)
+                    && surface.is_none_or(|surface| {
+                        adapter.is_surface_supported(surface)
+                    })
+            });
+
+    if adapter.is_none() {
+        log::warn!("No adapter named {name:?}; choosing by power preference");
+    }
+
+    adapter
+}
+
+#[cfg(target_arch = "wasm32")]
+fn named_adapter(
+    _instance: &wgpu::Instance,
+    _backends: wgpu::Backends,
+    _name: Option<&str>,
+    _surface: Option<&wgpu::Surface<'_>>,
+) -> Option<wgpu::Adapter> {
+    None
+}
+
+/// pyzed: `mode` if the surface offers it, otherwise the automatic mode closest to it.
+fn supported_present_mode(
+    mode: wgpu::PresentMode,
+    available: &[wgpu::PresentMode],
+) -> wgpu::PresentMode {
+    use wgpu::PresentMode;
+
+    match mode {
+        PresentMode::AutoVsync | PresentMode::AutoNoVsync => mode,
+        mode if available.contains(&mode) => mode,
+        PresentMode::Mailbox | PresentMode::Immediate => {
+            PresentMode::AutoNoVsync
+        }
+        _ => PresentMode::AutoVsync,
     }
 }
 
@@ -420,12 +490,16 @@ impl graphics::Compositor for Compositor {
             &wgpu::SurfaceConfiguration {
                 usage,
                 format: self.format,
-                present_mode: self.settings.present_mode,
+                // pyzed: a mode the surface does not offer would fail validation
+                present_mode: supported_present_mode(
+                    self.settings.present_mode,
+                    &capabilities.present_modes,
+                ),
                 width,
                 height,
                 alpha_mode: self.alpha_mode,
                 view_formats: vec![],
-                desired_maximum_frame_latency: 1,
+                desired_maximum_frame_latency: self.settings.frame_latency,
             },
         );
     }
