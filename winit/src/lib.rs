@@ -219,6 +219,11 @@ where
 
         #[cfg(target_arch = "wasm32")]
         canvas: Option<web_sys::HtmlCanvasElement>,
+
+        // pyzed: on Android a window has nothing to draw on until the activity resumes, so the
+        // events before that wait here (iced opens its windows at the first one).
+        #[cfg(target_os = "android")]
+        waiting: Option<Vec<Event<Action<Message>>>>,
     }
 
     let runner = Runner {
@@ -232,6 +237,9 @@ where
 
         #[cfg(target_arch = "wasm32")]
         canvas: None,
+
+        #[cfg(target_os = "android")]
+        waiting: Some(Vec::new()),
     };
 
     boot_span.finish();
@@ -250,6 +258,27 @@ where
                         .unwrap_or_default(),
                 );
             }
+
+            // pyzed: the first time, the events that waited for a surface; after that, the app
+            // comes back from the background with a new surface to draw on.
+            #[cfg(target_os = "android")]
+            match self.waiting.take() {
+                Some(waiting) => {
+                    for event in waiting {
+                        self.process_event(event_loop, event);
+                    }
+                }
+                None => self.process_event(event_loop, Event::Resumed),
+            }
+        }
+
+        // pyzed: the app went to the background and Android takes its surface away.
+        #[cfg(target_os = "android")]
+        fn suspended(
+            &mut self,
+            event_loop: &winit::event_loop::ActiveEventLoop,
+        ) {
+            self.process_event(event_loop, Event::Suspended);
         }
 
         fn new_events(
@@ -335,6 +364,12 @@ where
             event: Event<Action<Message>>,
         ) {
             if event_loop.exiting() {
+                return;
+            }
+
+            #[cfg(target_os = "android")]
+            if let Some(waiting) = &mut self.waiting {
+                waiting.push(event);
                 return;
             }
 
@@ -586,6 +621,12 @@ enum Event<Message: 'static> {
         on_created: oneshot::Sender<window::cursor::Id>,
     },
     EventLoopAwakened(winit::event::Event<Message>),
+    /// pyzed: Android took the surfaces away (the app went to the background).
+    #[cfg(target_os = "android")]
+    Suspended,
+    /// pyzed: Android gave the app a surface again.
+    #[cfg(target_os = "android")]
+    Resumed,
     Exit,
 }
 
@@ -871,6 +912,31 @@ async fn run_instance<P>(
                 let _ = cursor_registry.insert(id, cursor);
                 let _ = on_created.send(id);
             }
+            #[cfg(target_os = "android")]
+            Event::Suspended => {
+                // The surfaces must go before Android destroys what they draw on.
+                for (_id, window) in window_manager.iter_mut() {
+                    window.surface = None;
+                }
+            }
+            #[cfg(target_os = "android")]
+            Event::Resumed => {
+                let Some(compositor) = compositor.as_mut() else {
+                    continue;
+                };
+
+                for (_id, window) in window_manager.iter_mut() {
+                    let size = window.state.physical_size();
+
+                    window.surface = Some(compositor.create_surface(
+                        window.raw.clone(),
+                        size.width,
+                        size.height,
+                    ));
+                    window.surface_version = window.state.surface_version();
+                    window.raw.request_redraw();
+                }
+            }
             Event::EventLoopAwakened(event) => {
                 match event {
                     event::Event::NewEvents(event::StartCause::Init) => {
@@ -946,6 +1012,11 @@ async fn run_instance<P>(
                             continue;
                         }
 
+                        // pyzed: in the background on Android (no surface to draw on)
+                        let Some(surface) = window.surface.as_mut() else {
+                            continue;
+                        };
+
                         // Window was resized between redraws
                         if window.surface_version
                             != window.state.surface_version()
@@ -962,7 +1033,7 @@ async fn run_instance<P>(
                             layout_span.finish();
 
                             current_compositor.configure_surface(
-                                &mut window.surface,
+                                surface,
                                 physical_size.width,
                                 physical_size.height,
                             );
@@ -1146,9 +1217,13 @@ async fn run_instance<P>(
                         window.draw_preedit();
 
                         let present_span = debug::present(id);
+                        let Some(surface) = window.surface.as_mut() else {
+                            continue;
+                        };
+
                         match current_compositor.present(
                             &mut window.renderer,
-                            &mut window.surface,
+                            surface,
                             window.state.viewport(),
                             window.state.background_color(),
                             || window.raw.pre_present_notify(),
@@ -1170,15 +1245,16 @@ async fn run_instance<P>(
                                         window.state.physical_size();
 
                                     if error == compositor::SurfaceError::Lost {
-                                        window.surface = current_compositor
-                                            .create_surface(
+                                        window.surface = Some(
+                                            current_compositor.create_surface(
                                                 window.raw.clone(),
                                                 physical_size.width,
                                                 physical_size.height,
-                                            );
+                                            ),
+                                        );
                                     } else {
                                         current_compositor.configure_surface(
-                                            &mut window.surface,
+                                            surface,
                                             physical_size.width,
                                             physical_size.height,
                                         );
@@ -1232,6 +1308,17 @@ async fn run_instance<P>(
                         match window_event {
                             winit::event::WindowEvent::Resized(_) => {
                                 window.raw.request_redraw();
+                            }
+                            // pyzed: a tap on a focused input shows the soft keyboard again
+                            // (the user may have closed it while the input kept the focus).
+                            #[cfg(target_os = "android")]
+                            winit::event::WindowEvent::Touch(
+                                winit::event::Touch {
+                                    phase: winit::event::TouchPhase::Started,
+                                    ..
+                                },
+                            ) => {
+                                window.touched = true;
                             }
                             winit::event::WindowEvent::ThemeChanged(theme) => {
                                 let mode = conversion::theme_mode(theme);
