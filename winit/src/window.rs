@@ -39,6 +39,15 @@ where
     pacing: Pacing,
 }
 
+/// pyzed: how soon a window may draw the next animation frame.
+#[derive(Debug, Clone, Copy)]
+enum Limit {
+    /// At most once per interval (`None`: whenever asked).
+    Every(Option<Duration>),
+    /// Not until the window gets the focus back.
+    Paused,
+}
+
 /// pyzed: the frame rate limits of the animations of each window.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Pacing {
@@ -251,23 +260,27 @@ where
 
     pub fn request_redraw(&mut self, redraw_request: RedrawRequest) {
         // pyzed: the frames that animations ask for wait for the frame rate limit
-        let interval = if self.focused {
-            Some(self.pacing.focused)
+        let limit = if self.focused {
+            Limit::Every(self.pacing.focused)
         } else {
-            self.pacing.background.or(Some(self.pacing.focused))
+            match self.pacing.background {
+                Some(Some(interval)) => Limit::Every(Some(interval)),
+                Some(None) => Limit::Paused,
+                None => Limit::Every(self.pacing.focused),
+            }
         };
 
         let earliest = |interval: Option<Duration>| {
             interval.zip(self.last_frame).map(|(gap, last)| last + gap)
         };
 
-        match (redraw_request, interval) {
+        match (redraw_request, limit) {
             (RedrawRequest::Wait, _) => {}
             // Paused without the focus: drawn when the window gets it back
-            (_, None) => {
+            (_, Limit::Paused) => {
                 self.deferred = true;
             }
-            (RedrawRequest::NextFrame, Some(interval)) => {
+            (RedrawRequest::NextFrame, Limit::Every(interval)) => {
                 match earliest(interval) {
                     Some(at) if at > Instant::now() => {
                         self.redraw_at = Some(
@@ -280,7 +293,7 @@ where
                     }
                 }
             }
-            (RedrawRequest::At(at), Some(interval)) => {
+            (RedrawRequest::At(at), Limit::Every(interval)) => {
                 self.redraw_at = Some(match earliest(interval) {
                     Some(earliest) => at.max(earliest),
                     None => at,
