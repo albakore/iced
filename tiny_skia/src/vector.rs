@@ -182,19 +182,16 @@ impl Cache {
                 log::warn!("SVG rendering for {handle:?} panicked: {error:?}");
             }
 
-            if let Some([r, g, b, _]) = key.color {
+            if let Some([r, g, b, a]) = key.color {
                 // Apply color filter
+                // pyzed: keep the color's own alpha too (a translucent tint, a fading icon).
                 for pixel in
                     bytemuck::cast_slice_mut::<u8, u32>(image.data_mut())
                 {
+                    let alpha = ((*pixel >> 24) * u32::from(a) + 127) / 255;
                     *pixel = bytemuck::cast(
-                        tiny_skia::ColorU8::from_rgba(
-                            b,
-                            g,
-                            r,
-                            (*pixel >> 24) as u8,
-                        )
-                        .premultiply(),
+                        tiny_skia::ColorU8::from_rgba(b, g, r, alpha as u8)
+                            .premultiply(),
                     );
                 }
             } else {

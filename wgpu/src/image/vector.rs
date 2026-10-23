@@ -176,6 +176,12 @@ impl Cache {
                             rgba[0] = color[0];
                             rgba[1] = color[1];
                             rgba[2] = color[2];
+                            // pyzed: keep the color's own alpha too (a translucent tint, a fading icon).
+                            rgba[3] = ((u32::from(rgba[3])
+                                * u32::from(color[3])
+                                + 127)
+                                / 255)
+                                as u8;
                         }
                     });
                 }
