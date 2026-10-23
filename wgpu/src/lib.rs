@@ -22,6 +22,7 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(missing_docs)]
+pub mod effect;
 pub mod layer;
 pub mod primitive;
 pub mod settings;
@@ -93,6 +94,11 @@ pub struct Renderer {
     image_cache: std::cell::RefCell<image::Cache>,
 
     staging_belt: wgpu::util::StagingBelt,
+
+    // pyzed: effect layers (see `effect`).
+    effects: Vec<effect::Group>,
+    open_effects: Vec<usize>,
+    effect_pipeline: Option<effect::Pipeline>,
 }
 
 impl Renderer {
@@ -127,7 +133,45 @@ impl Renderer {
                 buffer::MAX_WRITE_SIZE as u64,
             ),
 
+            effects: Vec::new(),
+            open_effects: Vec::new(),
+            effect_pipeline: None,
+
             engine,
+        }
+    }
+
+    /// pyzed: starts drawing a group of layers that is composited with `effect`.
+    pub fn start_effect(&mut self, effect: effect::Effect) {
+        let (layer, transformation) = self.layers.current_mut();
+        let clip = layer.bounds;
+        let mut effect = effect;
+        effect.bounds = effect.bounds * transformation;
+        let scale = transformation.scale_factor();
+        effect.radius = effect.radius.map(|r| r * scale);
+        effect.blur *= scale;
+        effect.backdrop_blur *= scale;
+        if let Some(bloom) = &mut effect.bloom {
+            bloom.radius *= scale;
+        }
+
+        // `push_clip` transforms its bounds; the clip of the current layer already is.
+        self.layers.push_clip(clip * transformation.inverse());
+        let start = self.layers.as_slice().len() - 1;
+        self.open_effects.push(self.effects.len());
+        self.effects.push(effect::Group {
+            start,
+            end: start + 1,
+            effect,
+            clip,
+        });
+    }
+
+    /// pyzed: ends the group started by the last [`Renderer::start_effect`].
+    pub fn end_effect(&mut self) {
+        self.layers.pop_clip();
+        if let Some(open) = self.open_effects.pop() {
+            self.effects[open].end = self.layers.as_slice().len();
         }
     }
 
@@ -309,7 +353,13 @@ impl Renderer {
             viewport.physical_size(),
         ));
 
-        self.layers.merge();
+        // pyzed: merging would move layers in and out of effect groups (it also flushes the
+        // current layer, which still has to happen).
+        if self.effects.is_empty() {
+            self.layers.merge();
+        } else {
+            self.layers.flush();
+        }
 
         for layer in self.layers.iter() {
             let clip_bounds = layer.bounds * scale_factor;
@@ -423,36 +473,117 @@ impl Renderer {
     ) {
         use std::mem::ManuallyDrop;
 
-        let mut render_pass = ManuallyDrop::new(encoder.begin_render_pass(
-            &wgpu::RenderPassDescriptor {
+        let scale_factor = viewport.scale_factor();
+        let screen = Rectangle::<f32>::from(Rectangle::with_size(
+            viewport.physical_size(),
+        ));
+        let size = (viewport.physical_width(), viewport.physical_height());
+
+        // pyzed: effect groups render into off-screen targets, so the whole frame goes into an
+        // off-screen root first and is copied to `frame` at the end.
+        let mut groups = std::mem::take(&mut self.effects);
+        groups.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+        let mut effects = if groups.is_empty() {
+            None
+        } else {
+            let mut pipeline =
+                self.effect_pipeline.take().unwrap_or_else(|| {
+                    effect::Pipeline::new(
+                        &self.engine.device,
+                        self.engine.format,
+                    )
+                });
+            let device = &self.engine.device;
+            let format = self.engine.format;
+            let acquire = |p: &mut effect::Pipeline| {
+                p.acquire(device, format, size.0, size.1)
+            };
+            let root = acquire(&mut pipeline);
+            let scratch = [
+                acquire(&mut pipeline),
+                acquire(&mut pipeline),
+                acquire(&mut pipeline),
+            ];
+            let slots: Vec<(effect::Slot, Option<effect::Slot>)> = groups
+                .iter()
+                .map(|group| {
+                    let content = acquire(&mut pipeline);
+                    let backdrop = (group.effect.backdrop_blur > 0.0)
+                        .then(|| acquire(&mut pipeline));
+                    (content, backdrop)
+                })
+                .collect();
+            Some((pipeline, root, scratch, slots))
+        };
+
+        #[derive(Clone, Copy)]
+        enum Dest {
+            Frame,
+            Slot(effect::Slot),
+        }
+
+        fn view<'a>(
+            dest: Dest,
+            frame: &'a wgpu::TextureView,
+            pipeline: Option<&'a effect::Pipeline>,
+        ) -> &'a wgpu::TextureView {
+            match dest {
+                Dest::Frame => frame,
+                Dest::Slot(slot) => {
+                    pipeline.expect("effect pipeline").view(slot)
+                }
+            }
+        }
+
+        fn begin<'a>(
+            encoder: &'a mut wgpu::CommandEncoder,
+            view: &wgpu::TextureView,
+            load: wgpu::LoadOp<wgpu::Color>,
+        ) -> wgpu::RenderPass<'a> {
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("iced_wgpu render pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: frame,
+                    view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: match clear_color {
-                            Some(background_color) => wgpu::LoadOp::Clear({
-                                let [r, g, b, a] =
-                                    graphics::color::pack(background_color)
-                                        .components();
-
-                                wgpu::Color {
-                                    r: f64::from(r),
-                                    g: f64::from(g),
-                                    b: f64::from(b),
-                                    a: f64::from(a),
-                                }
-                            }),
-                            None => wgpu::LoadOp::Load,
-                        },
+                        load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
-            },
+            })
+        }
+
+        let first_load = match clear_color {
+            Some(background_color) => wgpu::LoadOp::Clear({
+                let [r, g, b, a] =
+                    graphics::color::pack(background_color).components();
+
+                wgpu::Color {
+                    r: f64::from(r),
+                    g: f64::from(g),
+                    b: f64::from(b),
+                    a: f64::from(a),
+                }
+            }),
+            None if effects.is_some() => {
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+            }
+            None => wgpu::LoadOp::Load,
+        };
+
+        let mut targets = vec![match &effects {
+            Some((_, root, ..)) => Dest::Slot(*root),
+            None => Dest::Frame,
+        }];
+
+        let mut render_pass = ManuallyDrop::new(begin(
+            encoder,
+            view(targets[0], frame, effects.as_ref().map(|(p, ..)| p)),
+            first_load,
         ));
 
         let mut quad_layer = 0;
@@ -462,206 +593,360 @@ impl Renderer {
         #[cfg(any(feature = "svg", feature = "image"))]
         let mut image_layer = 0;
 
-        let scale_factor = viewport.scale_factor();
-        let physical_bounds = Rectangle::<f32>::from(Rectangle::with_size(
-            viewport.physical_size(),
-        ));
-
         let scale = Transformation::scale(scale_factor);
 
-        for layer in self.layers.iter() {
-            let Some(physical_bounds) =
-                physical_bounds.intersection(&(layer.bounds * scale_factor))
-            else {
-                continue;
-            };
+        for (index, layer) in self.layers.iter().enumerate() {
+            // pyzed: open the effect groups that start at this layer, outermost first.
+            if let Some((pipeline, _, scratch, slots)) = &effects {
+                for (group, (content, backdrop)) in groups.iter().zip(slots) {
+                    if group.start != index {
+                        continue;
+                    }
 
-            let Some(scissor_rect) = physical_bounds.snap() else {
-                continue;
-            };
+                    let _ = ManuallyDrop::into_inner(render_pass);
+                    let parent = *targets.last().expect("a target");
 
-            if !layer.quads.is_empty() {
-                let render_span = debug::render(debug::Primitive::Quad);
-                self.quad.render(
-                    &self.engine.quad_pipeline,
-                    quad_layer,
-                    scissor_rect,
-                    &layer.quads,
-                    &mut render_pass,
-                );
-                render_span.finish();
-
-                quad_layer += 1;
-            }
-
-            if !layer.triangles.is_empty() {
-                let _ = ManuallyDrop::into_inner(render_pass);
-
-                let render_span = debug::render(debug::Primitive::Triangle);
-                mesh_layer += self.triangle.render(
-                    &self.engine.triangle_pipeline,
-                    encoder,
-                    frame,
-                    mesh_layer,
-                    &layer.triangles,
-                    physical_bounds,
-                    scale,
-                );
-                render_span.finish();
-
-                render_pass = ManuallyDrop::new(encoder.begin_render_pass(
-                    &wgpu::RenderPassDescriptor {
-                        label: Some("iced_wgpu render pass"),
-                        color_attachments: &[Some(
-                            wgpu::RenderPassColorAttachment {
-                                view: frame,
-                                depth_slice: None,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Load,
-                                    store: wgpu::StoreOp::Store,
-                                },
-                            },
-                        )],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    },
-                ));
-            }
-
-            if !layer.primitives.is_empty() {
-                let render_span = debug::render(debug::Primitive::Shader);
-
-                let primitive_storage = self
-                    .engine
-                    .primitive_storage
-                    .read()
-                    .expect("Read primitive storage");
-
-                let mut need_render = Vec::new();
-
-                for instance in &layer.primitives {
-                    let bounds = instance.bounds * scale;
-
-                    if let Some(clip_bounds) = (instance.bounds * scale)
-                        .intersection(&physical_bounds)
-                        .and_then(Rectangle::snap)
-                    {
-                        render_pass.set_viewport(
-                            bounds.x,
-                            bounds.y,
-                            bounds.width,
-                            bounds.height,
-                            0.0,
-                            1.0,
-                        );
-
-                        render_pass.set_scissor_rect(
-                            clip_bounds.x,
-                            clip_bounds.y,
-                            clip_bounds.width,
-                            clip_bounds.height,
-                        );
-
-                        let drawn = instance
-                            .primitive
-                            .draw(&primitive_storage, &mut render_pass);
-
-                        if !drawn {
-                            need_render.push((instance, clip_bounds));
+                    if let Some(backdrop) = backdrop {
+                        let radius = group.effect.backdrop_blur * scale_factor;
+                        if let Some(region) = effect::region(
+                            group.effect.bounds * scale_factor,
+                            radius * 1.5,
+                            size,
+                        ) {
+                            pipeline.blur(
+                                &self.engine.device,
+                                encoder,
+                                view(parent, frame, Some(pipeline)),
+                                pipeline.view(scratch[0]),
+                                pipeline.view(*backdrop),
+                                region,
+                                size,
+                                radius,
+                            );
                         }
                     }
+
+                    targets.push(Dest::Slot(*content));
+                    render_pass = ManuallyDrop::new(begin(
+                        encoder,
+                        pipeline.view(*content),
+                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    ));
+                }
+            }
+
+            let target = view(
+                *targets.last().expect("a target"),
+                frame,
+                effects.as_ref().map(|(p, ..)| p),
+            );
+
+            'draw: {
+                let Some(physical_bounds) =
+                    screen.intersection(&(layer.bounds * scale_factor))
+                else {
+                    break 'draw;
+                };
+
+                let Some(scissor_rect) = physical_bounds.snap() else {
+                    break 'draw;
+                };
+
+                if !layer.quads.is_empty() {
+                    let render_span = debug::render(debug::Primitive::Quad);
+                    self.quad.render(
+                        &self.engine.quad_pipeline,
+                        quad_layer,
+                        scissor_rect,
+                        &layer.quads,
+                        &mut render_pass,
+                    );
+                    render_span.finish();
+
+                    quad_layer += 1;
                 }
 
-                render_pass.set_viewport(
-                    0.0,
-                    0.0,
-                    viewport.physical_width() as f32,
-                    viewport.physical_height() as f32,
-                    0.0,
-                    1.0,
-                );
-
-                render_pass.set_scissor_rect(
-                    0,
-                    0,
-                    viewport.physical_width(),
-                    viewport.physical_height(),
-                );
-
-                if !need_render.is_empty() {
+                if !layer.triangles.is_empty() {
                     let _ = ManuallyDrop::into_inner(render_pass);
 
-                    for (instance, clip_bounds) in need_render {
-                        instance.primitive.render(
-                            &primitive_storage,
-                            encoder,
-                            frame,
-                            &clip_bounds,
-                        );
-                    }
+                    let render_span = debug::render(debug::Primitive::Triangle);
+                    mesh_layer += self.triangle.render(
+                        &self.engine.triangle_pipeline,
+                        encoder,
+                        target,
+                        mesh_layer,
+                        &layer.triangles,
+                        physical_bounds,
+                        scale,
+                    );
+                    render_span.finish();
 
-                    render_pass = ManuallyDrop::new(encoder.begin_render_pass(
-                        &wgpu::RenderPassDescriptor {
-                            label: Some("iced_wgpu render pass"),
-                            color_attachments: &[Some(
-                                wgpu::RenderPassColorAttachment {
-                                    view: frame,
-                                    depth_slice: None,
-                                    resolve_target: None,
-                                    ops: wgpu::Operations {
-                                        load: wgpu::LoadOp::Load,
-                                        store: wgpu::StoreOp::Store,
-                                    },
-                                },
-                            )],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                        },
+                    render_pass = ManuallyDrop::new(begin(
+                        encoder,
+                        target,
+                        wgpu::LoadOp::Load,
                     ));
                 }
 
-                render_span.finish();
+                if !layer.primitives.is_empty() {
+                    let render_span = debug::render(debug::Primitive::Shader);
+
+                    let primitive_storage = self
+                        .engine
+                        .primitive_storage
+                        .read()
+                        .expect("Read primitive storage");
+
+                    let mut need_render = Vec::new();
+
+                    for instance in &layer.primitives {
+                        let bounds = instance.bounds * scale;
+
+                        if let Some(clip_bounds) = (instance.bounds * scale)
+                            .intersection(&physical_bounds)
+                            .and_then(Rectangle::snap)
+                        {
+                            render_pass.set_viewport(
+                                bounds.x,
+                                bounds.y,
+                                bounds.width,
+                                bounds.height,
+                                0.0,
+                                1.0,
+                            );
+
+                            render_pass.set_scissor_rect(
+                                clip_bounds.x,
+                                clip_bounds.y,
+                                clip_bounds.width,
+                                clip_bounds.height,
+                            );
+
+                            let drawn = instance
+                                .primitive
+                                .draw(&primitive_storage, &mut render_pass);
+
+                            if !drawn {
+                                need_render.push((instance, clip_bounds));
+                            }
+                        }
+                    }
+
+                    render_pass.set_viewport(
+                        0.0,
+                        0.0,
+                        viewport.physical_width() as f32,
+                        viewport.physical_height() as f32,
+                        0.0,
+                        1.0,
+                    );
+
+                    render_pass.set_scissor_rect(
+                        0,
+                        0,
+                        viewport.physical_width(),
+                        viewport.physical_height(),
+                    );
+
+                    if !need_render.is_empty() {
+                        let _ = ManuallyDrop::into_inner(render_pass);
+
+                        for (instance, clip_bounds) in need_render {
+                            instance.primitive.render(
+                                &primitive_storage,
+                                encoder,
+                                target,
+                                &clip_bounds,
+                            );
+                        }
+
+                        render_pass = ManuallyDrop::new(begin(
+                            encoder,
+                            target,
+                            wgpu::LoadOp::Load,
+                        ));
+                    }
+
+                    render_span.finish();
+                }
+
+                #[cfg(any(feature = "svg", feature = "image"))]
+                if !layer.images.is_empty() {
+                    let render_span = debug::render(debug::Primitive::Image);
+                    self.image.render(
+                        &self.engine.image_pipeline,
+                        image_layer,
+                        scissor_rect,
+                        &mut render_pass,
+                    );
+                    render_span.finish();
+
+                    image_layer += 1;
+                }
+
+                if !layer.text.is_empty() {
+                    let render_span = debug::render(debug::Primitive::Text);
+                    text_layer += self.text.render(
+                        &self.engine.text_pipeline,
+                        &self.text_viewport,
+                        text_layer,
+                        &layer.text,
+                        scissor_rect,
+                        &mut render_pass,
+                    );
+                    render_span.finish();
+                }
             }
 
-            #[cfg(any(feature = "svg", feature = "image"))]
-            if !layer.images.is_empty() {
-                let render_span = debug::render(debug::Primitive::Image);
-                self.image.render(
-                    &self.engine.image_pipeline,
-                    image_layer,
-                    scissor_rect,
-                    &mut render_pass,
-                );
-                render_span.finish();
+            // pyzed: composite the effect groups that end after this layer, innermost first.
+            if let Some((pipeline, _, scratch, slots)) = &effects {
+                for (group, (content, backdrop)) in
+                    groups.iter().zip(slots).rev()
+                {
+                    if group.end != index + 1 {
+                        continue;
+                    }
 
-                image_layer += 1;
-            }
+                    let _ = ManuallyDrop::into_inner(render_pass);
+                    let _ = targets.pop();
+                    let parent = *targets.last().expect("a target");
+                    let parent_view = view(parent, frame, Some(pipeline));
+                    let device = &self.engine.device;
+                    let fx = &group.effect;
+                    let center = (fx.bounds * scale_factor).center();
+                    let scissor =
+                        effect::region(group.clip * scale_factor, 0.0, size);
 
-            if !layer.text.is_empty() {
-                let render_span = debug::render(debug::Primitive::Text);
-                text_layer += self.text.render(
-                    &self.engine.text_pipeline,
-                    &self.text_viewport,
-                    text_layer,
-                    &layer.text,
-                    scissor_rect,
-                    &mut render_pass,
-                );
-                render_span.finish();
+                    if let Some(backdrop) = backdrop {
+                        pipeline.backdrop(
+                            device,
+                            encoder,
+                            pipeline.view(*backdrop),
+                            parent_view,
+                            scissor,
+                            size,
+                            fx.bounds * scale_factor,
+                            fx.radius.map(|r| r * scale_factor),
+                            fx.rotation,
+                            fx.opacity.clamp(0.0, 1.0),
+                        );
+                    }
+
+                    // The light goes under the content, so the content stays legible.
+                    if let Some(bloom) = fx.bloom.filter(|b| b.intensity > 0.0)
+                    {
+                        let radius = bloom.radius.max(1.0) * scale_factor;
+                        if let Some(region) =
+                            effect::region(group.clip * scale_factor, 0.0, size)
+                        {
+                            pipeline.bright(
+                                device,
+                                encoder,
+                                pipeline.view(*content),
+                                pipeline.view(scratch[2]),
+                                region,
+                                size,
+                                bloom.threshold,
+                            );
+                            pipeline.blur(
+                                device,
+                                encoder,
+                                pipeline.view(scratch[2]),
+                                pipeline.view(scratch[0]),
+                                pipeline.view(scratch[1]),
+                                region,
+                                size,
+                                radius,
+                            );
+                            pipeline.composite(
+                                device,
+                                encoder,
+                                pipeline.view(scratch[1]),
+                                parent_view,
+                                scissor,
+                                size,
+                                [center.x, center.y],
+                                fx.rotation,
+                                bloom.intensity * fx.opacity.clamp(0.0, 1.0),
+                                effect::Composite::Add(bloom.color),
+                            );
+                        }
+                    }
+
+                    let mut source = pipeline.view(*content);
+
+                    if fx.blur > 0.0 {
+                        let radius = fx.blur * scale_factor;
+                        if let Some(region) =
+                            effect::region(group.clip * scale_factor, 0.0, size)
+                        {
+                            pipeline.blur(
+                                device,
+                                encoder,
+                                source,
+                                pipeline.view(scratch[0]),
+                                pipeline.view(scratch[1]),
+                                region,
+                                size,
+                                radius,
+                            );
+                            source = pipeline.view(scratch[1]);
+                        }
+                    }
+
+                    pipeline.composite(
+                        device,
+                        encoder,
+                        source,
+                        parent_view,
+                        scissor,
+                        size,
+                        [center.x, center.y],
+                        fx.rotation,
+                        fx.opacity.clamp(0.0, 1.0),
+                        effect::Composite::Over,
+                    );
+
+                    render_pass = ManuallyDrop::new(begin(
+                        encoder,
+                        parent_view,
+                        wgpu::LoadOp::Load,
+                    ));
+                }
             }
         }
 
         let _ = ManuallyDrop::into_inner(render_pass);
+
+        // pyzed: copy the off-screen root to the frame.
+        if let Some((mut pipeline, root, ..)) = effects.take() {
+            pipeline.composite(
+                &self.engine.device,
+                encoder,
+                pipeline.view(root),
+                frame,
+                None,
+                size,
+                [0.0, 0.0],
+                0.0,
+                1.0,
+                if clear_color.is_some() {
+                    effect::Composite::Replace
+                } else {
+                    effect::Composite::Over
+                },
+            );
+            pipeline.trim(size.0, size.1);
+            self.effect_pipeline = Some(pipeline);
+        }
+        self.effects = groups;
 
         debug::layers_rendered(|| {
             self.layers
                 .iter()
                 .filter(|layer| {
                     !layer.is_empty()
-                        && physical_bounds
+                        && screen
                             .intersection(&(layer.bounds * scale_factor))
                             .is_some_and(|viewport| viewport.snap().is_some())
                 })
@@ -698,6 +983,8 @@ impl core::Renderer for Renderer {
 
     fn reset(&mut self, new_bounds: Rectangle) {
         self.layers.reset(new_bounds);
+        self.effects.clear();
+        self.open_effects.clear();
     }
 
     fn allocate_image(
