@@ -98,7 +98,7 @@ where
     ) -> Self {
         let mut root = root.into();
 
-        let Cache { mut state } = cache;
+        let Cache { mut state, .. } = cache;
         state.diff(root.as_widget());
 
         let base = root.as_widget_mut().layout(
@@ -577,16 +577,61 @@ where
         }
     }
 
+    /// pyzed: builds a [`UserInterface`] for a `root` that the app knows is the same as the one
+    /// the [`Cache`] comes from, so its layout is reused when the bounds did not change.
+    ///
+    /// A `root` that differs from the cached one in anything that affects the layout gets a
+    /// layout that does not match it; use [`UserInterface::build`] when unsure.
+    pub fn build_unchanged<E: Into<Element<'a, Message, Theme, Renderer>>>(
+        root: E,
+        bounds: Size,
+        cache: Cache,
+        renderer: &mut Renderer,
+    ) -> Self {
+        let mut root = root.into();
+
+        let Cache { mut state, layout } = cache;
+        state.diff(root.as_widget());
+
+        let base = match layout {
+            Some((cached, base)) if cached == bounds => base,
+            _ => root.as_widget_mut().layout(
+                &mut state,
+                renderer,
+                &layout::Limits::new(Size::ZERO, bounds),
+            ),
+        };
+
+        UserInterface {
+            root,
+            base,
+            state,
+            overlay: None,
+            bounds,
+        }
+    }
+
     /// Relayouts and returns a new  [`UserInterface`] using the provided
     /// bounds.
     pub fn relayout(self, bounds: Size, renderer: &mut Renderer) -> Self {
-        Self::build(self.root, bounds, Cache { state: self.state }, renderer)
+        Self::build(
+            self.root,
+            bounds,
+            Cache {
+                state: self.state,
+                layout: None,
+            },
+            renderer,
+        )
     }
 
     /// Extract the [`Cache`] of the [`UserInterface`], consuming it in the
     /// process.
     pub fn into_cache(self) -> Cache {
-        Cache { state: self.state }
+        Cache {
+            state: self.state,
+            layout: Some((self.bounds, self.base)),
+        }
     }
 }
 
@@ -594,6 +639,9 @@ where
 #[derive(Debug)]
 pub struct Cache {
     state: widget::Tree,
+    /// pyzed: the layout of the interface and the bounds it was computed for, reused by
+    /// [`UserInterface::build_unchanged`].
+    layout: Option<(Size, layout::Node)>,
 }
 
 impl Cache {
@@ -604,6 +652,7 @@ impl Cache {
     pub fn new() -> Cache {
         Cache {
             state: widget::Tree::empty(),
+            layout: None,
         }
     }
 }

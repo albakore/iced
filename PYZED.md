@@ -26,6 +26,19 @@ changes iced.
   when the app comes back, and a tap on a focused input shows the soft keyboard again (see
   `winit/PYZED.md`).
 
+- `iced::Settings::rendering` (`iced::settings::Rendering`) tunes how windows are drawn and paced:
+  the samples of the antialiasing (2x to 16x), the presentation mode (fifo, fifo_relaxed, mailbox,
+  immediate, falling back when the surface lacks it), the power preference, a GPU picked by name,
+  the GPU memory hints, the frame latency, and frame rate limits for animations in focused and
+  unfocused windows (0 pauses them). Environment variables override each field (`ICED_MSAA`,
+  `ICED_PRESENT_MODE`, `WGPU_POWER_PREF`, `WGPU_ADAPTER_NAME`, `ICED_MEMORY`, `ICED_FRAME_LATENCY`,
+  `ICED_MAX_FPS`, `ICED_BACKGROUND_FPS`).
+- Windows covered whole by others (`Occluded`, on X11, macOS, iOS and the Web) skip their frames and
+  draw once when they show again.
+- `iced_winit::quiet::set_unchanged` lets the app name the windows a message did not change: they
+  keep their layout (`UserInterface::build_unchanged`, the cache now keeps it) and are not redrawn.
+  `iced_winit::quiet::graphics` tells which GPU and backend draw the windows.
+
 ## Community pull requests (81)
 
 - [#3081](https://github.com/iced-rs/iced/pull/3081) Add `Mouse::Scroll` instruction to `tester`
