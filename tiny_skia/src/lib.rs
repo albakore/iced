@@ -386,10 +386,10 @@ fn composite(
         (light, bloom.intensity)
     });
 
-    if fx.blur > 0.0 {
-        if let Some(region) = region {
-            effect::blur(content, region, fx.blur * scale_factor);
-        }
+    if fx.blur > 0.0
+        && let Some(region) = region
+    {
+        effect::blur(content, region, fx.blur * scale_factor);
     }
 
     if let Some(backdrop) = backdrop {
