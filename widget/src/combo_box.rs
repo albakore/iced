@@ -154,6 +154,7 @@ pub struct ComboBox<
     padding: Padding,
     size: Option<f32>,
     text_shaping: text::Shaping,
+    letter_spacing: crate::core::Em,
     menu_class: <Theme as menu::Catalog>::Class<'a>,
     menu_height: Length,
 }
@@ -193,6 +194,7 @@ where
             padding: text_input::DEFAULT_PADDING,
             size: None,
             text_shaping: text::Shaping::default(),
+            letter_spacing: crate::core::Em::default(),
             menu_class: <Theme as Catalog>::default_menu(),
             menu_height: Length::Shrink,
         }
@@ -299,6 +301,15 @@ where
     /// Sets the [`text::Shaping`] strategy of the [`ComboBox`].
     pub fn text_shaping(mut self, shaping: text::Shaping) -> Self {
         self.text_shaping = shaping;
+        self
+    }
+
+    /// Sets the letter spacing of the [`ComboBox`].
+    pub fn letter_spacing(
+        mut self,
+        letter_spacing: impl Into<crate::core::Em>,
+    ) -> Self {
+        self.letter_spacing = letter_spacing.into();
         self
     }
 
@@ -935,7 +946,8 @@ where
                 )
                 .width(bounds.width)
                 .padding(self.padding)
-                .text_shaping(self.text_shaping);
+                .text_shaping(self.text_shaping)
+                .letter_spacing(self.letter_spacing);
 
                 if let Some(on_scroll) = self.on_scroll.as_deref() {
                     menu = menu.on_scroll(on_scroll);

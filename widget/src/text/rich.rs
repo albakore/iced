@@ -33,6 +33,7 @@ pub struct Rich<
     align_x: Alignment,
     align_y: alignment::Vertical,
     wrapping: Wrapping,
+    letter_spacing: crate::core::Em,
     class: Theme::Class<'a>,
     hovered_link: Option<usize>,
     on_link_click: Option<Box<dyn Fn(Link) -> Message + 'a>>,
@@ -58,6 +59,7 @@ where
             align_x: Alignment::Default,
             align_y: alignment::Vertical::Top,
             wrapping: Wrapping::default(),
+            letter_spacing: crate::core::Em::default(),
             class: Theme::default(),
             hovered_link: None,
             on_link_click: None,
@@ -128,6 +130,15 @@ where
     /// Sets the [`Wrapping`] strategy of the [`Rich`] text.
     pub fn wrapping(mut self, wrapping: Wrapping) -> Self {
         self.wrapping = wrapping;
+        self
+    }
+
+    /// Sets the letter spacing of the [`Rich`] text.
+    pub fn letter_spacing(
+        mut self,
+        letter_spacing: impl Into<crate::core::Em>,
+    ) -> Self {
+        self.letter_spacing = letter_spacing.into();
         self
     }
 
@@ -247,6 +258,7 @@ where
             self.align_x,
             self.align_y,
             self.wrapping,
+            self.letter_spacing,
         )
     }
 
@@ -476,6 +488,7 @@ fn layout<Link, Renderer>(
     align_x: Alignment,
     align_y: alignment::Vertical,
     wrapping: Wrapping,
+    letter_spacing: crate::core::Em,
 ) -> layout::Node
 where
     Link: Clone,
@@ -497,6 +510,7 @@ where
             align_y,
             shaping: Shaping::Advanced,
             wrapping,
+            letter_spacing,
         };
 
         if state.spans != spans {
@@ -514,6 +528,7 @@ where
                 align_y,
                 shaping: Shaping::Advanced,
                 wrapping,
+                letter_spacing,
             }) {
                 core::text::Difference::None => {}
                 core::text::Difference::Bounds => {

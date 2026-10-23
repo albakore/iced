@@ -28,7 +28,7 @@ use crate::text;
 use crate::text::paragraph::{self, Paragraph};
 use crate::widget::tree::{self, Tree};
 use crate::{
-    Color, Element, Layout, Length, Pixels, Rectangle, Size, Theme, Widget,
+    Color, Element, Em, Layout, Length, Pixels, Rectangle, Size, Theme, Widget,
 };
 
 pub use text::{Alignment, LineHeight, Shaping, Wrapping};
@@ -152,6 +152,12 @@ where
     /// Sets the [`Wrapping`] strategy of the [`Text`].
     pub fn wrapping(mut self, wrapping: Wrapping) -> Self {
         self.format.wrapping = wrapping;
+        self
+    }
+
+    /// Sets the letter spacing of the [`Text`].
+    pub fn letter_spacing(mut self, letter_spacing: impl Into<Em>) -> Self {
+        self.format.letter_spacing = letter_spacing.into();
         self
     }
 
@@ -281,6 +287,7 @@ pub struct Format<Font> {
     pub align_y: alignment::Vertical,
     pub shaping: Shaping,
     pub wrapping: Wrapping,
+    pub letter_spacing: Em,
 }
 
 impl<Font> Default for Format<Font> {
@@ -295,6 +302,7 @@ impl<Font> Default for Format<Font> {
             align_y: alignment::Vertical::Top,
             shaping: Shaping::default(),
             wrapping: Wrapping::default(),
+            letter_spacing: Em::ZERO,
         }
     }
 }
@@ -326,6 +334,7 @@ where
             align_y: format.align_y,
             shaping: format.shaping,
             wrapping: format.wrapping,
+            letter_spacing: format.letter_spacing,
         });
 
         paragraph.min_bounds()

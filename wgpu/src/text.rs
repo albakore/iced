@@ -479,6 +479,7 @@ fn prepare(
                 line_height,
                 font,
                 shaping,
+                letter_spacing,
                 align_x,
                 ..
             } => {
@@ -495,6 +496,7 @@ fn prepare(
                             height: bounds.height,
                         },
                         shaping: *shaping,
+                        letter_spacing: *letter_spacing,
                     },
                     version,
                 );

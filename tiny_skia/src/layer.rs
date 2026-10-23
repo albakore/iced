@@ -89,6 +89,7 @@ impl Layer {
             align_x: text.align_x,
             align_y: text.align_y,
             shaping: text.shaping,
+            letter_spacing: text.letter_spacing,
             clip_bounds: clip_bounds * transformation,
         };
 
@@ -446,6 +447,7 @@ mod tests {
                 align_x: Alignment::Default,
                 align_y: alignment::Vertical::Top,
                 shaping: Shaping::default(),
+                letter_spacing: crate::core::Em::ZERO,
                 wrapping: Wrapping::None,
             },
             Point::new(10.5, 20.0),

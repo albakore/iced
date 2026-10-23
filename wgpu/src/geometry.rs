@@ -358,6 +358,7 @@ impl geometry::frame::Backend for Frame {
                 align_x: text.align_x,
                 align_y: text.align_y,
                 shaping: text.shaping,
+                letter_spacing: text.letter_spacing,
                 clip_bounds: self.clip_bounds,
             });
         } else {

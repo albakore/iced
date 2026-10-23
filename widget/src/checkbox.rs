@@ -98,6 +98,7 @@ pub struct Checkbox<
     text_line_height: text::LineHeight,
     text_shaping: text::Shaping,
     text_wrapping: text::Wrapping,
+    letter_spacing: crate::core::Em,
     font: Option<Renderer::Font>,
     icon: Icon<Renderer::Font>,
     class: Theme::Class<'a>,
@@ -128,6 +129,7 @@ where
             text_line_height: text::LineHeight::default(),
             text_shaping: text::Shaping::default(),
             text_wrapping: text::Wrapping::default(),
+            letter_spacing: crate::core::Em::default(),
             font: None,
             icon: Icon {
                 font: Renderer::ICON_FONT,
@@ -214,6 +216,15 @@ where
     /// Sets the [`text::Wrapping`] strategy of the [`Checkbox`].
     pub fn text_wrapping(mut self, wrapping: text::Wrapping) -> Self {
         self.text_wrapping = wrapping;
+        self
+    }
+
+    /// Sets the letter spacing of the [`Checkbox`].
+    pub fn letter_spacing(
+        mut self,
+        letter_spacing: impl Into<crate::core::Em>,
+    ) -> Self {
+        self.letter_spacing = letter_spacing.into();
         self
     }
 
@@ -306,6 +317,7 @@ where
                             align_y: alignment::Vertical::Top,
                             shaping: self.text_shaping,
                             wrapping: self.text_wrapping,
+                            letter_spacing: self.letter_spacing,
                         },
                     )
                 } else {
@@ -431,6 +443,7 @@ where
                         align_y: alignment::Vertical::Center,
                         shaping: *shaping,
                         wrapping: text::Wrapping::default(),
+                        letter_spacing: crate::core::Em::default(),
                     },
                     bounds.center(),
                     style.icon_color,

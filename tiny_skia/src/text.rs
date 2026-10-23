@@ -1,6 +1,6 @@
 use crate::core::alignment;
 use crate::core::text::{Alignment, Shaping};
-use crate::core::{Color, Font, Pixels, Point, Rectangle, Transformation};
+use crate::core::{Color, Em, Font, Pixels, Point, Rectangle, Transformation};
 use crate::graphics::text::cache::{self, Cache};
 use crate::graphics::text::editor;
 use crate::graphics::text::font_system;
@@ -101,6 +101,7 @@ impl Pipeline {
         align_x: Alignment,
         align_y: alignment::Vertical,
         shaping: Shaping,
+        letter_spacing: Em,
         pixels: &mut tiny_skia::PixmapMut<'_>,
         clip_mask: Option<&tiny_skia::Mask>,
         transformation: Transformation,
@@ -119,6 +120,7 @@ impl Pipeline {
             line_height,
             shaping,
             align_x,
+            letter_spacing,
         };
 
         let (_, entry) =

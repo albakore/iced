@@ -112,6 +112,7 @@ pub struct TextInput<
     padding: Padding,
     size: Option<Pixels>,
     line_height: text::LineHeight,
+    letter_spacing: crate::core::Em,
     alignment: alignment::Horizontal,
     on_input: Option<Box<dyn Fn(String) -> Message + 'a>>,
     on_paste: Option<Box<dyn Fn(String) -> Message + 'a>>,
@@ -159,6 +160,7 @@ where
             padding: DEFAULT_PADDING,
             size: None,
             line_height: text::LineHeight::default(),
+            letter_spacing: crate::core::Em::default(),
             alignment: alignment::Horizontal::Left,
             on_input: None,
             on_paste: None,
@@ -322,6 +324,15 @@ where
         self
     }
 
+    /// Sets the letter spacing of the [`TextInput`].
+    pub fn letter_spacing(
+        mut self,
+        letter_spacing: impl Into<crate::core::Em>,
+    ) -> Self {
+        self.letter_spacing = letter_spacing.into();
+        self
+    }
+
     /// Sets the horizontal alignment of the [`TextInput`].
     pub fn align_x(
         mut self,
@@ -379,6 +390,7 @@ where
             align_y: alignment::Vertical::Center,
             shaping: text::Shaping::Advanced,
             wrapping: text::Wrapping::default(),
+            letter_spacing: self.letter_spacing,
         };
 
         let _ = state.placeholder.update(placeholder_text);
@@ -404,6 +416,7 @@ where
                 align_y: alignment::Vertical::Center,
                 shaping: text::Shaping::Advanced,
                 wrapping: text::Wrapping::default(),
+                letter_spacing: crate::core::Em::default(),
             };
 
             let _ = state.icon.update(icon_text);
@@ -773,6 +786,7 @@ where
                 self.font,
                 self.size,
                 self.line_height,
+                self.letter_spacing,
             );
         };
 
@@ -1755,6 +1769,7 @@ fn replace_paragraph<Renderer>(
     font: Option<Renderer::Font>,
     text_size: Option<Pixels>,
     line_height: text::LineHeight,
+    letter_spacing: crate::core::Em,
 ) where
     Renderer: text::Renderer,
 {
@@ -1774,6 +1789,7 @@ fn replace_paragraph<Renderer>(
         align_y: alignment::Vertical::Center,
         shaping: text::Shaping::Advanced,
         wrapping: text::Wrapping::default(),
+        letter_spacing,
     });
 }
 

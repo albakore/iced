@@ -14,7 +14,7 @@ use crate::core::text;
 use crate::core::theme;
 use crate::core::time::Instant;
 use crate::core::{
-    Color, InputMethod, Padding, Point, Rectangle, Size, Text, Vector,
+    Color, Em, InputMethod, Padding, Point, Rectangle, Size, Text, Vector,
 };
 use crate::graphics::Compositor;
 use crate::program::{self, Program};
@@ -416,6 +416,7 @@ where
                 align_y: alignment::Vertical::Top,
                 shaping: text::Shaping::Advanced,
                 wrapping: text::Wrapping::None,
+                letter_spacing: Em::ZERO,
             });
 
             self.spans.clear();
