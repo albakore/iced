@@ -78,7 +78,12 @@ impl Border {
 impl Interpolable for Border {
     fn interpolated(&self, other: Self, ratio: f32) -> Self {
         Self {
-            color: self.color.interpolated(other.color, ratio),
+            color: Color {
+                r: self.color.r + (other.color.r - self.color.r) * ratio,
+                g: self.color.g + (other.color.g - self.color.g) * ratio,
+                b: self.color.b + (other.color.b - self.color.b) * ratio,
+                a: self.color.a + (other.color.a - self.color.a) * ratio,
+            },
             width: self.width.interpolated(other.width, ratio),
             radius: self.radius.interpolated(other.radius, ratio),
         }
