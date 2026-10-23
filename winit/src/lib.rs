@@ -378,15 +378,13 @@ where
                                     core::window::Position::Centered => None,
                                     core::window::Position::Specific(
                                         position,
-                                    ) => position
-                                        .monitor_index
-                                        .map(|index| {
+                                    ) => position.monitor_index.and_then(
+                                        |index| {
                                             event_loop
                                                 .available_monitors()
-                                                .skip(index.0)
-                                                .next()
-                                        })
-                                        .flatten(),
+                                                .nth(index.0)
+                                        },
+                                    ),
                                 };
 
                                 let monitor = requested_monitor
@@ -1390,9 +1388,8 @@ async fn run_instance<P>(
                                 }
                             }
 
-                            for (event, status) in window_events
-                                .into_iter()
-                                .zip(statuses.into_iter())
+                            for (event, status) in
+                                window_events.into_iter().zip(statuses)
                             {
                                 runtime.broadcast(
                                     subscription::Event::Interaction {
@@ -1659,8 +1656,8 @@ fn run_action<'a, P, C>(
                 }
             }
             window::Action::Resize(id, size) => {
-                if let Some(window) = window_manager.get_mut(id) {
-                    if let Some(size) = window.raw.request_inner_size(
+                if let Some(window) = window_manager.get_mut(id)
+                    && let Some(size) = window.raw.request_inner_size(
                         winit::dpi::LogicalSize {
                             width: size.width,
                             height: size.height,
@@ -1668,19 +1665,16 @@ fn run_action<'a, P, C>(
                         .to_physical::<f32>(f64::from(
                             window.state.scale_factor(),
                         )),
-                    ) {
-                        // Inject window resize event if the underlying windowing system doesn't produce one for us.
-                        let _ = event_sender.unbounded_send(
-                            Event::EventLoopAwakened(
-                                winit::event::Event::WindowEvent {
-                                    window_id: window.raw.id(),
-                                    event: winit::event::WindowEvent::Resized(
-                                        size,
-                                    ),
-                                },
-                            ),
-                        );
-                    }
+                    )
+                {
+                    // Inject window resize event if the underlying windowing system doesn't produce one for us.
+                    let _ =
+                        event_sender.unbounded_send(Event::EventLoopAwakened(
+                            winit::event::Event::WindowEvent {
+                                window_id: window.raw.id(),
+                                event: winit::event::WindowEvent::Resized(size),
+                            },
+                        ));
                 }
             }
             window::Action::SetMinSize(id, size) => {
@@ -1775,18 +1769,15 @@ fn run_action<'a, P, C>(
                         })
                         .ok();
 
-                    let monitor_index = window
-                        .raw
-                        .current_monitor()
-                        .map(|monitor| {
+                    let monitor_index =
+                        window.raw.current_monitor().and_then(|monitor| {
                             window
                                 .raw
                                 .available_monitors()
                                 .enumerate()
                                 .find(|(_, handle)| handle == &monitor)
                                 .map(|(index, _)| MonitorIndex(index))
-                        })
-                        .flatten();
+                        });
 
                     let _ = channel.send(position.map(|position| {
                         PositionOnMonitor {
@@ -1808,10 +1799,9 @@ fn run_action<'a, P, C>(
                     let monitor = position
                         .monitor_index
                         // Option 1: try to get given monitor from index
-                        .map(|index| {
-                            window.raw.available_monitors().skip(index.0).next()
+                        .and_then(|index| {
+                            window.raw.available_monitors().nth(index.0)
                         })
-                        .flatten()
                         // Option 2 try to get the current monitor
                         .or_else(|| window.raw.current_monitor());
                     let winit_position = conversion::position_on_monitor(

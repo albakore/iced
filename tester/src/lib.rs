@@ -540,7 +540,7 @@ impl<P: Program + 'static> Tester<P> {
                         }
                     } else {
                         self.instructions
-                            .push(Instruction::Interact(new_interaction))
+                            .push(Instruction::Interact(new_interaction));
                     }
                 }
 
@@ -944,7 +944,7 @@ where
     stack![
         container(
             slider(range, current, on_change)
-                .step(10.0)
+                .step(10.0_f32)
                 .width(Fill)
                 .height(24)
                 .style(|theme: &core::Theme, status| {

@@ -291,11 +291,10 @@ impl<P: Program + 'static> Emulator<P> {
                                 let _ = sender.send(1.0);
                             }
                         }
-                        window::Action::GetMode(id, sender) => {
-                            if id == self.window {
-                                let _ =
-                                    sender.send(core::window::Mode::Windowed);
-                            }
+                        window::Action::GetMode(id, sender)
+                            if id == self.window =>
+                        {
+                            let _ = sender.send(core::window::Mode::Windowed);
                         }
                         _ => {
                             // Ignored
