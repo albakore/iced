@@ -528,6 +528,7 @@ where
                     radius: handle_border_radius,
                     width: style.handle.border_width,
                     color: style.handle.border_color,
+                    ..Border::default()
                 },
                 ..renderer::Quad::default()
             },
@@ -740,6 +741,7 @@ fn styled(theme: &Theme, status: Status, swatch: [palette::Pair; 3]) -> Style {
                 radius: 2.0.into(),
                 width: 0.0,
                 color: Color::TRANSPARENT,
+                ..Border::default()
             },
         },
         handle: Handle {
