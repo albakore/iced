@@ -10,6 +10,22 @@ use crate::core::{
 };
 use crate::pane_grid::controls::Controls;
 
+/// When the controls of a [`TitleBar`] are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShowControls {
+    /// Never
+    Never,
+    /// When the cursor is over the [`TitleBar`].
+    TitleBar,
+    /// when the cursor is over the whole [`Pane`].
+    ///
+    /// [`Pane`]: super::Pane
+    #[default]
+    Pane,
+    /// Always
+    Always,
+}
+
 /// The title bar of a [`Pane`].
 ///
 /// [`Pane`]: super::Pane
@@ -25,7 +41,7 @@ pub struct TitleBar<
     content: Element<'a, Message, Theme, Renderer>,
     controls: Option<Controls<'a, Message, Theme, Renderer>>,
     padding: Padding,
-    always_show_controls: bool,
+    show_controls: ShowControls,
     class: Theme::Class<'a>,
 }
 
@@ -42,7 +58,7 @@ where
             content: content.into(),
             controls: None,
             padding: Padding::ZERO,
-            always_show_controls: false,
+            show_controls: ShowControls::default(),
             class: Theme::default(),
         }
     }
@@ -62,16 +78,28 @@ where
         self
     }
 
-    /// Sets whether or not the [`controls`] attached to this [`TitleBar`] are
-    /// always visible.
+    /// Sets when the [`controls`] attached to this [`TitleBar`] are visible.
     ///
     /// By default, the controls are only visible when the [`Pane`] of this
     /// [`TitleBar`] is hovered.
     ///
     /// [`controls`]: Self::controls
     /// [`Pane`]: super::Pane
+    pub fn show_controls(mut self, show_controls: ShowControls) -> Self {
+        self.show_controls = show_controls;
+        self
+    }
+
+    /// Sets whether or not the [`controls`] attached to this [`TitleBar`] are
+    /// always visible.
+    ///
+    /// This is equivalent to [`show_controls`](Self::show_controls) with
+    /// [`ShowControls::Always`].
+    ///
+    /// [`controls`]: Self::controls
+    /// [`Pane`]: super::Pane
     pub fn always_show_controls(mut self) -> Self {
-        self.always_show_controls = true;
+        self.show_controls = ShowControls::Always;
         self
     }
 
@@ -155,7 +183,7 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
-        show_controls: bool,
+        is_pane_hovered: bool,
     ) {
         let bounds = layout.bounds();
         let style = theme.style(&self.class);
@@ -173,8 +201,15 @@ where
         let title_layout = children.next().unwrap();
         let mut show_title = true;
 
+        let show_controls = match self.show_controls {
+            ShowControls::Never => false,
+            ShowControls::TitleBar => cursor.is_over(bounds),
+            ShowControls::Pane => is_pane_hovered,
+            ShowControls::Always => true,
+        };
+
         if let Some(controls) = &self.controls
-            && (show_controls || self.always_show_controls)
+            && show_controls
         {
             let controls_layout = children.next().unwrap();
             if title_layout.bounds().width + controls_layout.bounds().width
