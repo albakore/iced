@@ -146,7 +146,7 @@ impl Handle {
     pub fn from_path_with_version<T: Into<PathBuf>>(path: T, version: u64) -> Handle {
         let path = path.into();
 
-        Self::Path(Id::path_with_version(&path, version), path)
+        Self::Path(Id::path_with_version(&path, version), path, false)
     }
 
     /// Creates an image [`Handle`] containing the encoded image data directly.
