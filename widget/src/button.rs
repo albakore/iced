@@ -177,7 +177,10 @@ where
     /// if `Some`.
     ///
     /// If `None`, the [`Button`] will be disabled.
-    pub fn on_press_maybe_with(mut self, on_press: Option<impl Fn() -> Message + 'a>) -> Self {
+    pub fn on_press_maybe_with(
+        mut self,
+        on_press: Option<impl Fn() -> Message + 'a>,
+    ) -> Self {
         self.on_press = on_press.map(|f| OnPress::Closure(Box::new(f)));
         self
     }

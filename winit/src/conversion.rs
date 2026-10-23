@@ -110,8 +110,8 @@ pub fn window_attributes(
         );
 
         if settings.blur {
-            attributes = attributes
-                .with_system_backdrop(BackdropType::TransientWindow);
+            attributes =
+                attributes.with_system_backdrop(BackdropType::TransientWindow);
         }
 
         attributes = attributes.with_taskbar_icon(

@@ -245,7 +245,8 @@ where
                 } else {
                     state.has_popped_in = false;
                     if self.on_hide.is_some() {
-                        state.should_notify_at = Some((false, *now + self.delay));
+                        state.should_notify_at =
+                            Some((false, *now + self.delay));
                     }
                 }
             } else if distance <= self.anticipate.0 {

@@ -143,7 +143,10 @@ impl Handle {
     /// identity even when the path is the same. This lets callers bust the
     /// renderer's texture cache when the file at `path` has been rewritten
     /// in place, for example by passing the file's modification time.
-    pub fn from_path_with_version<T: Into<PathBuf>>(path: T, version: u64) -> Handle {
+    pub fn from_path_with_version<T: Into<PathBuf>>(
+        path: T,
+        version: u64,
+    ) -> Handle {
         let path = path.into();
 
         Self::Path(Id::path_with_version(&path, version), path, false)

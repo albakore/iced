@@ -100,7 +100,10 @@ impl Handle {
     /// identity even when the path is the same. This lets callers bust the
     /// renderer's cache when the file at `path` has been rewritten in place,
     /// for example by passing the file's modification time.
-    pub fn from_path_with_version(path: impl Into<PathBuf>, version: u64) -> Handle {
+    pub fn from_path_with_version(
+        path: impl Into<PathBuf>,
+        version: u64,
+    ) -> Handle {
         Self::from_data_with_version(Data::Path(path.into()), version)
     }
 

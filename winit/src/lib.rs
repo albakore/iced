@@ -1864,12 +1864,14 @@ fn run_action<'a, P, C>(
             }
             window::Action::GetMonitorPosition(id, channel) => {
                 if let Some(window) = window_manager.get(id) {
-                    let position = window.raw.current_monitor().map(|monitor| {
-                        let scale = window.state.scale_factor();
-                        let position = monitor.position().to_logical(f64::from(scale));
+                    let position =
+                        window.raw.current_monitor().map(|monitor| {
+                            let scale = window.state.scale_factor();
+                            let position =
+                                monitor.position().to_logical(f64::from(scale));
 
-                        Point::new(position.x, position.y)
-                    });
+                            Point::new(position.x, position.y)
+                        });
 
                     let _ = channel.send(position);
                 }
