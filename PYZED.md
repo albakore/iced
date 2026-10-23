@@ -21,7 +21,10 @@ changes iced.
   tiny-skia when the adapter runs on the CPU (llvmpipe, lavapipe, WARP, SwiftShader).
 - `iced_graphics::text::set_tab_width` sets the columns between tab stops of editors and paragraphs.
 - `iced_winit::quiet` lets the app handle a message before the windows are rebuilt, and
-  `iced_winit::android::set_app` hands the Android activity to the event loop (see `winit/PYZED.md`).
+  `iced_winit::android::set_app` hands the Android activity to the event loop; on Android the
+  windows wait for the activity to resume, drop their surfaces in the background and get new ones
+  when the app comes back, and a tap on a focused input shows the soft keyboard again (see
+  `winit/PYZED.md`).
 
 ## Community pull requests (81)
 

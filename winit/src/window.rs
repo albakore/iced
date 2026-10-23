@@ -76,13 +76,15 @@ where
                 raw: window,
                 state,
                 exit_on_close_request,
-                surface,
+                surface: Some(surface),
                 surface_version,
                 renderer,
                 mouse_interaction: mouse::Interaction::None,
                 redraw_at: None,
                 preedit: None,
                 ime_state: None,
+                #[cfg(target_os = "android")]
+                touched: false,
             },
         );
 
@@ -168,12 +170,16 @@ where
     pub state: State<P>,
     pub exit_on_close_request: bool,
     pub mouse_interaction: mouse::Interaction,
-    pub surface: C::Surface,
+    /// pyzed: `None` while Android keeps the app in the background.
+    pub surface: Option<C::Surface>,
     pub surface_version: u64,
     pub renderer: P::Renderer,
     pub redraw_at: Option<Instant>,
     preedit: Option<Preedit<P::Renderer>>,
     ime_state: Option<(Rectangle, input_method::Purpose)>,
+    /// pyzed: the screen was touched since the last input method request.
+    #[cfg(target_os = "android")]
+    pub touched: bool,
 }
 
 impl<P, C> Window<P, C>
@@ -211,6 +217,14 @@ where
     }
 
     pub fn request_input_method(&mut self, input_method: InputMethod) {
+        #[cfg(target_os = "android")]
+        if std::mem::take(&mut self.touched)
+            && self.ime_state.is_some()
+            && matches!(input_method, InputMethod::Enabled { .. })
+        {
+            self.raw.set_ime_allowed(true);
+        }
+
         match input_method {
             InputMethod::Disabled => {
                 self.disable_ime();
