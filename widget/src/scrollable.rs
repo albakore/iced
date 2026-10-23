@@ -42,6 +42,7 @@ use crate::core::{
 
 pub use operation::scrollable::{AbsoluteOffset, RelativeOffset};
 
+const KINETIC_SCROLL_BOUNDARY: f32 = 0.5;
 /// A widget that can vertically display an infinite amount of content with a
 /// scrollbar.
 ///
@@ -82,6 +83,8 @@ pub struct Scrollable<
     on_scroll: Option<Box<dyn Fn(Viewport) -> Message + 'a>>,
     class: Theme::Class<'a>,
     last_status: Option<Status>,
+    /// retention coef for kinetic scroll (active only for touchpads)
+    kinetic_retention: f32,
 }
 
 impl<'a, Message, Theme, Renderer> Scrollable<'a, Message, Theme, Renderer>
@@ -111,6 +114,7 @@ where
             on_scroll: None,
             class: Theme::default(),
             last_status: None,
+            kinetic_retention: 0.98,
         }
         .enclose()
     }
@@ -126,6 +130,13 @@ where
             self.height = self.height.enclose(size_hint.height);
         }
 
+        self
+    }
+
+    /// Set retention coef for kinetic scroll (between 0 and 1, default 0.9. Bigger - longer
+    /// inertia, smaller - shorter inertia)
+    pub fn kinetic_retention(mut self, retention: f32) -> Self {
+        self.kinetic_retention = retention;
         self
     }
 
@@ -766,21 +777,28 @@ where
                 }
             }
 
-            if matches!(state.interaction, Interaction::AutoScrolling { .. })
-                && matches!(
-                    event,
-                    Event::Mouse(
-                        mouse::Event::ButtonPressed(_)
-                            | mouse::Event::WheelScrolled { .. }
-                    ) | Event::Touch(_)
-                        | Event::Keyboard(_)
-                )
-            {
+            if matches!(
+                state.interaction,
+                Interaction::AutoScrolling { .. }
+                    | Interaction::KineticScrolling { .. }
+            ) && matches!(
+                event,
+                Event::Mouse(
+                    mouse::Event::ButtonPressed(_)
+                        | mouse::Event::WheelScrolled { .. }
+                ) | Event::Touch(_)
+                    | Event::Keyboard(_)
+            ) {
                 state.interaction = Interaction::None;
-                shell.capture_event();
-                shell.invalidate_layout();
-                shell.request_redraw();
-                return;
+                if matches!(
+                    state.interaction,
+                    Interaction::AutoScrolling { .. }
+                ) {
+                    shell.capture_event();
+                    shell.invalidate_layout();
+                    shell.request_redraw();
+                    return;
+                }
             }
 
             if state.last_scrolled.is_none()
@@ -844,7 +862,7 @@ where
             }
 
             match event {
-                Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                Event::Mouse(mouse::Event::WheelScrolled { delta, phase }) => {
                     if cursor_over_scrollable.is_none() {
                         return;
                     }
@@ -882,6 +900,64 @@ where
                         bounds,
                         content_bounds,
                     );
+
+                    // macOS has its own kinetic scrolling
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        match phase {
+                            mouse::ScrollPhase::Started => {
+                                state.interaction =
+                                    Interaction::TrackpadScrolling {
+                                        timestamp: Instant::now(),
+                                        speed: Vector::new(0.0, 0.0),
+                                    };
+                            }
+                            mouse::ScrollPhase::Moved
+                                if let Interaction::TrackpadScrolling {
+                                    timestamp,
+                                    ..
+                                } = state.interaction =>
+                            {
+                                let cur = Instant::now();
+                                state.interaction =
+                                    Interaction::TrackpadScrolling {
+                                        timestamp: cur,
+                                        speed: delta
+                                            / (cur
+                                                .duration_since(timestamp)
+                                                .as_secs_f32()),
+                                    };
+                            }
+                            mouse::ScrollPhase::Ended
+                                if let Interaction::TrackpadScrolling {
+                                    speed,
+                                    ..
+                                } = state.interaction =>
+                            {
+                                if speed.x.abs() + speed.y.abs()
+                                    > KINETIC_SCROLL_BOUNDARY
+                                {
+                                    state.interaction =
+                                        Interaction::KineticScrolling {
+                                            timestamp: Instant::now(),
+                                            speed,
+                                        };
+                                    shell.request_redraw();
+                                } else {
+                                    state.interaction = Interaction::None;
+                                }
+                            }
+                            mouse::ScrollPhase::Cancelled
+                                if matches!(
+                                    state.interaction,
+                                    Interaction::TrackpadScrolling { .. }
+                                ) =>
+                            {
+                                state.interaction = Interaction::None;
+                            }
+                            _ => {}
+                        }
+                    }
 
                     let has_scrolled = notify_scroll(
                         state,
@@ -1002,85 +1078,126 @@ where
                     state.keyboard_modifiers = *modifiers;
                 }
                 Event::Window(window::Event::RedrawRequested(now)) => {
-                    if let Interaction::AutoScrolling {
-                        origin,
-                        current,
-                        last_frame,
-                    } = state.interaction
-                    {
-                        if last_frame == Some(*now) {
-                            shell.request_redraw();
-                            return;
-                        }
+                    match state.interaction {
+                        Interaction::KineticScrolling { timestamp, speed } => {
+                            if speed.x.abs() + speed.y.abs()
+                                > KINETIC_SCROLL_BOUNDARY
+                            {
+                                let cur = Instant::now();
+                                let duration =
+                                    cur.duration_since(timestamp).as_secs_f32();
+                                let new_speed = speed
+                                    * self
+                                        .kinetic_retention
+                                        .powf(duration * 60.0);
+                                state.scroll(
+                                    self.direction.align(new_speed * duration),
+                                    bounds,
+                                    content_bounds,
+                                );
+                                let has_scrolled = notify_scroll(
+                                    state,
+                                    &self.on_scroll,
+                                    bounds,
+                                    content_bounds,
+                                    shell,
+                                );
 
-                        state.interaction = Interaction::AutoScrolling {
+                                if !has_scrolled {
+                                    state.interaction = Interaction::None;
+                                } else {
+                                    state.interaction =
+                                        Interaction::KineticScrolling {
+                                            timestamp: cur,
+                                            speed: new_speed,
+                                        };
+                                    shell.invalidate_layout();
+                                    shell.request_redraw();
+                                    return;
+                                }
+                            } else {
+                                state.interaction = Interaction::None;
+                            }
+                        }
+                        Interaction::AutoScrolling {
                             origin,
                             current,
-                            last_frame: None,
-                        };
-
-                        let mut delta = current - origin;
-
-                        if delta.x.abs() < AUTOSCROLL_DEADZONE {
-                            delta.x = 0.0;
-                        }
-
-                        if delta.y.abs() < AUTOSCROLL_DEADZONE {
-                            delta.y = 0.0;
-                        }
-
-                        if delta.x != 0.0 || delta.y != 0.0 {
-                            let time_delta =
-                                if let Some(last_frame) = last_frame {
-                                    *now - last_frame
-                                } else {
-                                    Duration::ZERO
-                                };
-
-                            let scroll_factor = time_delta.as_secs_f32();
-
-                            state.scroll(
-                                self.direction.align(Vector::new(
-                                    delta.x.signum()
-                                        * delta
-                                            .x
-                                            .abs()
-                                            .powf(AUTOSCROLL_SMOOTHNESS)
-                                        * scroll_factor,
-                                    delta.y.signum()
-                                        * delta
-                                            .y
-                                            .abs()
-                                            .powf(AUTOSCROLL_SMOOTHNESS)
-                                        * scroll_factor,
-                                )),
-                                bounds,
-                                content_bounds,
-                            );
-
-                            let has_scrolled = notify_scroll(
-                                state,
-                                &self.on_scroll,
-                                bounds,
-                                content_bounds,
-                                shell,
-                            );
-
-                            if has_scrolled || time_delta.is_zero() {
-                                state.interaction =
-                                    Interaction::AutoScrolling {
-                                        origin,
-                                        current,
-                                        last_frame: Some(*now),
-                                    };
-
+                            last_frame,
+                        } => {
+                            if last_frame == Some(*now) {
                                 shell.request_redraw();
+                                return;
                             }
 
-                            return;
-                        }
-                    }
+                            state.interaction = Interaction::AutoScrolling {
+                                origin,
+                                current,
+                                last_frame: None,
+                            };
 
+                            let mut delta = current - origin;
+
+                            if delta.x.abs() < AUTOSCROLL_DEADZONE {
+                                delta.x = 0.0;
+                            }
+
+                            if delta.y.abs() < AUTOSCROLL_DEADZONE {
+                                delta.y = 0.0;
+                            }
+
+                            if delta.x != 0.0 || delta.y != 0.0 {
+                                let time_delta =
+                                    if let Some(last_frame) = last_frame {
+                                        *now - last_frame
+                                    } else {
+                                        Duration::ZERO
+                                    };
+
+                                let scroll_factor = time_delta.as_secs_f32();
+
+                                state.scroll(
+                                    self.direction.align(Vector::new(
+                                        delta.x.signum()
+                                            * delta
+                                                .x
+                                                .abs()
+                                                .powf(AUTOSCROLL_SMOOTHNESS)
+                                            * scroll_factor,
+                                        delta.y.signum()
+                                            * delta
+                                                .y
+                                                .abs()
+                                                .powf(AUTOSCROLL_SMOOTHNESS)
+                                            * scroll_factor,
+                                    )),
+                                    bounds,
+                                    content_bounds,
+                                );
+
+                                let has_scrolled = notify_scroll(
+                                    state,
+                                    &self.on_scroll,
+                                    bounds,
+                                    content_bounds,
+                                    shell,
+                                );
+
+                                if has_scrolled || time_delta.is_zero() {
+                                    state.interaction =
+                                        Interaction::AutoScrolling {
+                                            origin,
+                                            current,
+                                            last_frame: Some(*now),
+                                        };
+
+                                    shell.request_redraw();
+                                }
+
+                                return;
+                            }
+                        }
+                        _ => {}
+                    }
                     let _ = notify_viewport(
                         state,
                         &self.on_scroll,
@@ -1652,6 +1769,14 @@ enum Interaction {
     None,
     YScrollerGrabbed(f32),
     XScrollerGrabbed(f32),
+    KineticScrolling {
+        timestamp: Instant,
+        speed: Vector,
+    },
+    TrackpadScrolling {
+        timestamp: Instant,
+        speed: Vector,
+    },
     TouchScrolling(Point),
     AutoScrolling {
         origin: Point,

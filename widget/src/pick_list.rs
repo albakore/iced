@@ -491,6 +491,7 @@ where
             }
             Event::Mouse(mouse::Event::WheelScrolled {
                 delta: mouse::ScrollDelta::Lines { y, .. },
+                phase: mouse::ScrollPhase::Moved,
             }) => {
                 if state.keyboard_modifiers.command()
                     && cursor.is_over(layout.bounds())
