@@ -114,6 +114,7 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
+        show_controls: bool,
     ) {
         let bounds = layout.bounds();
 
@@ -127,8 +128,6 @@ where
             let mut children = layout.children();
             let title_bar_layout = children.next().unwrap();
             let body_layout = children.next().unwrap();
-
-            let show_controls = cursor.is_over(bounds);
 
             self.body.as_widget().draw(
                 &tree.children[0],
