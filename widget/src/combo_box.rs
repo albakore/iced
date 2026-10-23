@@ -68,9 +68,9 @@ use crate::core::{
     Theme, Vector,
 };
 use crate::overlay::menu;
+use crate::scrollable::Viewport;
 use crate::text::LineHeight;
 use crate::text_input::{self, TextInput};
-
 use std::cell::RefCell;
 use std::fmt::Display;
 
@@ -149,6 +149,7 @@ pub struct ComboBox<
     on_open: Option<Message>,
     on_close: Option<Message>,
     on_input: Option<Box<dyn Fn(String) -> Message>>,
+    on_scroll: Option<Box<dyn Fn(Viewport) -> Message + 'a>>,
     padding: Padding,
     size: Option<f32>,
     text_shaping: text::Shaping,
@@ -187,6 +188,7 @@ where
             on_input: None,
             on_open: None,
             on_close: None,
+            on_scroll: None,
             padding: text_input::DEFAULT_PADDING,
             size: None,
             text_shaping: text::Shaping::default(),
@@ -226,6 +228,16 @@ where
     /// of the [`ComboBox`] is pressed.
     pub fn on_close(mut self, message: Message) -> Self {
         self.on_close = Some(message);
+        self
+    }
+
+    /// Sets the message that will be produced when the menu of the
+    /// [`ComboBox`] is scrolled.
+    pub fn on_scroll(
+        mut self,
+        on_scroll: impl Fn(Viewport) -> Message + 'a,
+    ) -> Self {
+        self.on_scroll = Some(Box::new(on_scroll));
         self
     }
 
@@ -923,6 +935,10 @@ where
                 .width(bounds.width)
                 .padding(self.padding)
                 .text_shaping(self.text_shaping);
+
+                if let Some(on_scroll) = self.on_scroll.as_deref() {
+                    menu = menu.on_scroll(on_scroll);
+                }
 
                 if let Some(font) = self.font {
                     menu = menu.font(font);
