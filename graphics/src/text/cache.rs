@@ -159,7 +159,7 @@ pub struct Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::text::{Alignment, Ellipsis, Shaping, Wrapping};
+    use crate::core::text::{Alignment, Shaping};
 
     use std::sync::Arc;
 
@@ -173,12 +173,10 @@ mod tests {
             content: "Hello, world!",
             size: 16.0,
             line_height: 20.0,
-            font: Font::new("Fira Sans"),
+            font: Font::with_name("Fira Sans"),
             bounds: Size::new(1000.0, 1000.0),
             shaping: Shaping::Advanced,
             align_x: Alignment::default(),
-            wrapping: Wrapping::default(),
-            ellipsis: Ellipsis::default(),
         }
     }
 

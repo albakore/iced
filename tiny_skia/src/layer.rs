@@ -428,7 +428,7 @@ impl<T> Item<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::text::{Alignment, Ellipsis, LineHeight, Shaping, Wrapping};
+    use crate::core::text::{Alignment, LineHeight, Shaping, Wrapping};
     use crate::core::{Font, Pixels, Size, Text as CoreText, alignment};
 
     fn layer_with_text(content: &str) -> Layer {
@@ -445,8 +445,6 @@ mod tests {
                 align_y: alignment::Vertical::Top,
                 shaping: Shaping::default(),
                 wrapping: Wrapping::None,
-                ellipsis: Ellipsis::default(),
-                hint_factor: None,
             },
             Point::new(10.5, 20.0),
             Color::WHITE,
