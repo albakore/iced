@@ -85,7 +85,7 @@ impl Pipeline {
 
 #[derive(Debug, Default)]
 struct Cache {
-    entries: FxHashMap<raster::Id, Option<Entry>>,
+    entries: FxHashMap<raster::Id, Result<Entry, raster::Error>>,
     hits: FxHashSet<raster::Id>,
 }
 
@@ -100,15 +100,11 @@ impl Cache {
             let image = match graphics::image::load(handle) {
                 Ok(image) => image,
                 Err(error) => {
-                    let _ = entry.insert(None);
+                    let _ = entry.insert(Err(error.clone()));
 
                     return Err(error);
                 }
             };
-
-            if image.width() == 0 || image.height() == 0 {
-                return Err(raster::Error::Empty);
-            }
 
             let mut buffer =
                 vec![0u32; image.width() as usize * image.height() as usize];
@@ -121,7 +117,7 @@ impl Cache {
                 );
             }
 
-            let _ = entry.insert(Some(Entry {
+            let _ = entry.insert(Ok(Entry {
                 width: image.width(),
                 height: image.height(),
                 pixels: buffer,
@@ -130,8 +126,7 @@ impl Cache {
 
         let _ = self.hits.insert(id);
 
-        Ok(self
-            .entries
+        self.entries
             .get(&id)
             .unwrap()
             .as_ref()
@@ -143,7 +138,7 @@ impl Cache {
                 )
                 .expect("Build pixmap from image bytes")
             })
-            .expect("Image should be allocated"))
+            .map_err(Clone::clone)
     }
 
     fn trim(&mut self) {
