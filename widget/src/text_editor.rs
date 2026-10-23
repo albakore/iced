@@ -485,6 +485,16 @@ where
     pub fn is_empty(&self) -> bool {
         self.0.borrow().editor.is_empty()
     }
+
+    /// Returns the current boundaries of the [`Content`].
+    pub fn bounds(&self) -> Size {
+        self.0.borrow().editor.bounds()
+    }
+
+    /// Returns the minimum boundaries to fit the current text in the [`Content`].
+    pub fn min_bounds(&self) -> Size {
+        self.0.borrow().editor.min_bounds()
+    }
 }
 
 impl<Renderer> Clone for Content<Renderer>
