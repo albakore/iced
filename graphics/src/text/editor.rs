@@ -604,6 +604,9 @@ impl editor::Editor for Editor {
                 buffer.set_wrap(font_system.raw(), new_wrap);
             }
 
+            // pyzed: tab stops every `text::tab_width()` columns.
+            buffer.set_tab_width(font_system.raw(), text::tab_width());
+
             if new_bounds != internal.bounds {
                 log::trace!("Updating size of `Editor`...");
 

@@ -112,6 +112,20 @@ impl Text {
 pub const FIRA_SANS_REGULAR: &[u8] =
     include_bytes!("../fonts/FiraSans-Regular.ttf").as_slice();
 
+// pyzed: the columns between tab stops in editors and plain paragraphs (cosmic-text uses 8).
+static TAB_WIDTH: std::sync::atomic::AtomicU16 =
+    std::sync::atomic::AtomicU16::new(8);
+
+/// pyzed: sets the columns between tab stops of the text editors and plain paragraphs.
+pub fn set_tab_width(width: u16) {
+    TAB_WIDTH.store(width.max(1), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// pyzed: the columns between tab stops (see [`set_tab_width`]).
+pub fn tab_width() -> u16 {
+    TAB_WIDTH.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Returns the global [`FontSystem`].
 pub fn font_system() -> &'static RwLock<FontSystem> {
     static FONT_SYSTEM: OnceLock<RwLock<FontSystem>> = OnceLock::new();
