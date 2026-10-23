@@ -14,7 +14,7 @@ use crate::core::{
     Rectangle, Shadow, Size, Theme, Vector,
 };
 use crate::core::{Element, Shell, Widget};
-use crate::scrollable::{self, Scrollable};
+use crate::scrollable::{self, Scrollable, Viewport};
 
 /// A list of selectable options.
 pub struct Menu<
@@ -34,6 +34,7 @@ pub struct Menu<
     hovered_option: &'a mut Option<usize>,
     on_selected: Box<dyn FnMut(T) -> Message + 'a>,
     on_option_hovered: Option<&'a dyn Fn(T) -> Message>,
+    on_scroll: Option<&'a dyn Fn(Viewport) -> Message>,
     width: f32,
     padding: Padding,
     text_size: Option<Pixels>,
@@ -68,6 +69,7 @@ where
             hovered_option,
             on_selected: Box::new(on_selected),
             on_option_hovered,
+            on_scroll: None,
             width: 0.0,
             padding: Padding::ZERO,
             text_size: None,
@@ -108,6 +110,15 @@ where
     /// Sets the [`text::Shaping`] strategy of the [`Menu`].
     pub fn text_shaping(mut self, shaping: text::Shaping) -> Self {
         self.text_shaping = shaping;
+        self
+    }
+
+    /// Sets the message that will be produced when the [`Menu`] is scrolled.
+    pub fn on_scroll(
+        mut self,
+        on_scroll: &'a dyn Fn(Viewport) -> Message,
+    ) -> Self {
+        self.on_scroll = Some(on_scroll);
         self
     }
 
@@ -198,6 +209,7 @@ where
             hovered_option,
             on_selected,
             on_option_hovered,
+            on_scroll,
             width,
             padding,
             font,
@@ -220,6 +232,12 @@ where
             class,
         })
         .height(menu_height);
+
+        let list = if let Some(on_scroll) = on_scroll {
+            list.on_scroll(on_scroll)
+        } else {
+            list
+        };
 
         state.tree.diff(&list as &dyn Widget<_, _, _>);
 
