@@ -157,8 +157,12 @@ impl<'a, Message> Shell<'a, Message> {
     /// function to the messages of the latter.
     ///
     /// This method is useful for composition.
-    pub fn merge<B>(&mut self, other: Shell<'_, B>, f: impl Fn(B) -> Message) {
-        self.messages.extend(other.messages.drain(..).map(f));
+    pub fn merge<B>(
+        &mut self,
+        other: Shell<'_, B>,
+        f: impl Fn(B) -> Option<Message>,
+    ) {
+        self.messages.extend(other.messages.drain(..).filter_map(f));
 
         self.is_layout_invalid =
             self.is_layout_invalid || other.is_layout_invalid;
