@@ -168,9 +168,10 @@ impl Builder {
         &mut self,
         top_left: Point,
         size: Size,
-        radius: border::Radius,
+        radius: impl Into<border::Radius>,
     ) {
         let min_size = (size.height / 2.0).min(size.width / 2.0);
+        let radius: border::Radius = radius.into();
         let [
             top_left_corner,
             top_right_corner,

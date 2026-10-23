@@ -53,7 +53,7 @@ impl Path {
     pub fn rounded_rectangle(
         top_left: Point,
         size: Size,
-        radius: border::Radius,
+        radius: impl Into<border::Radius>,
     ) -> Self {
         Self::new(|p| p.rounded_rectangle(top_left, size, radius))
     }
