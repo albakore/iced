@@ -162,6 +162,11 @@ impl Handle {
         height: u32,
         pixels: impl Into<Bytes>,
     ) -> Handle {
+        assert!(
+            width > 0 && height > 0,
+            "Image width and height must be greater than 0"
+        );
+
         Self::Rgba {
             id: Id::unique(),
             width,
