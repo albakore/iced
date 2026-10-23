@@ -1,4 +1,5 @@
-use crate::runtime::task::{self, Task};
+use crate::futures::futures::channel::mpsc;
+use crate::runtime::task::Task;
 
 use std::process;
 
@@ -6,7 +7,7 @@ pub const COMPATIBLE_REVISION: &str =
     "3f75f3240edc1719df584810337bc7df010327d8";
 
 pub fn launch() -> Task<launch::Result> {
-    task::try_blocking(|mut sender| {
+    Task::blocking(|| {
         let cargo_install = process::Command::new("cargo")
             .args(["install", "--list"])
             .output()?;
@@ -38,7 +39,6 @@ pub fn launch() -> Task<launch::Result> {
                 .stderr(process::Stdio::null())
                 .spawn()?;
 
-            let _ = sender.try_send(());
             return Ok(());
         }
 
@@ -47,51 +47,60 @@ pub fn launch() -> Task<launch::Result> {
 }
 
 pub fn install() -> Task<install::Result> {
-    task::try_blocking(|mut sender| {
-        use std::io::{BufRead, BufReader};
-        use std::process::{Command, Stdio};
+    let (mut sender, receiver) = mpsc::channel(1);
 
-        let mut install = Command::new("cargo")
-            .args([
-                "install",
-                "--locked",
-                "--git",
-                "https://github.com/iced-rs/comet.git",
-                "--rev",
-                COMPATIBLE_REVISION,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()?;
+    Task::batch([
+        Task::stream(receiver).map(Ok),
+        Task::blocking(move || {
+            use std::io::{BufRead, BufReader};
+            use std::process::{Command, Stdio};
 
-        let mut stderr = BufReader::new(
-            install.stderr.take().expect("stderr must be piped"),
-        );
+            let mut install = Command::new("cargo")
+                .args([
+                    "install",
+                    "--locked",
+                    "--git",
+                    "https://github.com/iced-rs/comet.git",
+                    "--rev",
+                    COMPATIBLE_REVISION,
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()?;
 
-        let mut log = String::new();
+            let mut stderr = BufReader::new(
+                install.stderr.take().expect("stderr must be piped"),
+            );
 
-        while let Ok(n) = stderr.read_line(&mut log) {
-            if n == 0 {
-                let status = install.wait()?;
+            let mut log = String::new();
 
-                if status.success() {
-                    break;
-                } else {
-                    return Err(install::Error::ProcessFailed(status));
+            while let Ok(n) = stderr.read_line(&mut log) {
+                if n == 0 {
+                    let status = install.wait()?;
+
+                    if status.success() {
+                        break;
+                    } else {
+                        return Err(install::Error::ProcessFailed(status));
+                    }
                 }
+
+                let _ = sender.try_send(install::Event::Logged(
+                    log.trim_end().to_owned(),
+                ));
+
+                log.clear();
             }
 
-            let _ = sender
-                .try_send(install::Event::Logged(log.trim_end().to_owned()));
+            let _ = sender.try_send(install::Event::Finished);
 
-            log.clear();
-        }
-
-        let _ = sender.try_send(install::Event::Finished);
-
-        Ok(())
-    })
+            Ok(())
+        })
+        .map(Result::err)
+        .and_then(Task::done)
+        .map(Err),
+    ])
 }
 
 pub mod launch {
