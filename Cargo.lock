@@ -2731,7 +2731,7 @@ dependencies = [
  "image",
  "itertools 0.14.0",
  "rayon",
- "thiserror 2.0.18",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
