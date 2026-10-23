@@ -421,7 +421,10 @@ impl<'a, Link, Font> Span<'a, Link, Font> {
 
     /// Sets the size of the [`Span`].
     pub fn size(mut self, size: impl Into<Pixels>) -> Self {
-        self.size = Some(size.into());
+        let size = size.into();
+        assert!(size.0 > 0.0, "text size must be greater than zero");
+
+        self.size = Some(size);
         self
     }
 
@@ -673,3 +676,14 @@ into_fragment!(isize);
 
 into_fragment!(f32);
 into_fragment!(f64);
+
+#[cfg(test)]
+mod tests {
+    use super::Span;
+
+    #[test]
+    #[should_panic(expected = "text size must be greater than zero")]
+    fn span_size_must_be_positive() {
+        let _ = Span::<()>::new("text").size(0.0);
+    }
+}
