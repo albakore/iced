@@ -196,7 +196,7 @@ impl Cache {
     #[cfg(feature = "svg")]
     pub fn measure_svg(&mut self, handle: &core::svg::Handle) -> Size<u32> {
         // TODO: Concurrency
-        self.vector.load(handle).viewport_dimensions()
+        self.vector.load(handle, None).viewport_dimensions()
     }
 
     #[cfg(feature = "image")]
@@ -274,6 +274,7 @@ impl Cache {
         belt: &mut wgpu::util::StagingBelt,
         handle: &core::svg::Handle,
         color: Option<core::Color>,
+        current_color: Option<core::Color>,
         size: Size,
         scale: f32,
     ) -> Option<(&atlas::Entry, &Arc<wgpu::BindGroup>)> {
@@ -285,6 +286,7 @@ impl Cache {
                 belt,
                 handle,
                 color,
+                current_color,
                 size,
                 scale,
                 &mut self.atlas,
