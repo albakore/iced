@@ -153,8 +153,6 @@ mod tests {
             align_x: Alignment::Default,
             align_y: alignment::Vertical::Center,
             shaping: Shaping::Basic,
-            wrapping: Wrapping::default(),
-            ellipsis: Ellipsis::default(),
             clip_bounds: viewport(),
         };
 
@@ -191,8 +189,6 @@ mod tests {
             align_x: Alignment::Left,
             align_y: alignment::Vertical::Top,
             shaping: Shaping::Basic,
-            wrapping: Wrapping::default(),
-            ellipsis: Ellipsis::default(),
             clip_bounds: viewport(),
         };
 
@@ -220,8 +216,6 @@ mod tests {
             align_y: alignment::Vertical::Center,
             shaping: Shaping::Basic,
             wrapping: Wrapping::default(),
-            ellipsis: Ellipsis::default(),
-            hint_factor: None,
         });
 
         let anchor = layout_bounds.anchor(
