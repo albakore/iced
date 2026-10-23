@@ -1,4 +1,6 @@
 //! Handle events of a user interface.
+#[cfg(feature = "gamepad")]
+use crate::gamepad;
 use crate::input_method;
 use crate::keyboard;
 use crate::mouse;
@@ -18,6 +20,10 @@ pub enum Event {
 
     /// A mouse event
     Mouse(mouse::Event),
+
+    /// A gamepad event
+    #[cfg(feature = "gamepad")]
+    Gamepad(gamepad::Event),
 
     /// A window event
     Window(window::Event),

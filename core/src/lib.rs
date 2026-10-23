@@ -15,6 +15,8 @@ pub mod border;
 pub mod clipboard;
 pub mod event;
 pub mod font;
+#[cfg(feature = "gamepad")]
+pub mod gamepad;
 pub mod gradient;
 pub mod image;
 pub mod input_method;
