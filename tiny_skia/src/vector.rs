@@ -1,4 +1,4 @@
-use crate::core::svg::{Data, Handle};
+use crate::core::svg::{self, Data, Handle};
 use crate::core::{Color, Rectangle, Size};
 
 use resvg::usvg;
@@ -34,6 +34,7 @@ impl Pipeline {
         &mut self,
         handle: &Handle,
         color: Option<Color>,
+        current_color: Option<Color>,
         bounds: Rectangle,
         opacity: f32,
         pixels: &mut tiny_skia::PixmapMut<'_>,
@@ -43,6 +44,7 @@ impl Pipeline {
         if let Some(image) = self.cache.borrow_mut().draw(
             handle,
             color,
+            current_color,
             Size::new(
                 (bounds.width * transform.sx) as u32,
                 (bounds.height * transform.sy) as u32,
@@ -69,22 +71,45 @@ impl Pipeline {
 
 #[derive(Default)]
 struct Cache {
-    trees: FxHashMap<u64, Option<resvg::usvg::Tree>>,
-    tree_hits: FxHashSet<u64>,
+    trees: FxHashMap<Key, Option<resvg::usvg::Tree>>,
+    tree_hits: FxHashSet<Key>,
     rasters: FxHashMap<RasterKey, tiny_skia::Pixmap>,
     raster_hits: FxHashSet<RasterKey>,
     fontdb: Option<Arc<usvg::fontdb::Database>>,
 }
 
+/// Key for identifying SVGs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct Key {
+    id: u64,
+    current_color: ColorKey,
+}
+
+impl Key {
+    pub fn new(id: u64, color: Option<Color>) -> Self {
+        Self {
+            id,
+            current_color: color.map(Color::into_rgba8),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct RasterKey {
     id: u64,
-    color: Option<[u8; 4]>,
+    color: ColorKey,
+    current_color: ColorKey,
     size: Size<u32>,
 }
 
+type ColorKey = Option<[u8; 4]>;
+
 impl Cache {
-    fn load(&mut self, handle: &Handle) -> Option<&usvg::Tree> {
+    fn load(
+        &mut self,
+        handle: &Handle,
+        current_color: Option<Color>,
+    ) -> Option<&usvg::Tree> {
         let id = handle.id();
 
         // TODO: Reuse `cosmic-text` font database
@@ -104,10 +129,12 @@ impl Cache {
                 .as_ref()
                 .expect("fontdb must be initialized")
                 .clone(),
+            style_sheet: current_color.map(svg::color_style_sheet),
             ..usvg::Options::default()
         };
 
-        if let hash_map::Entry::Vacant(entry) = self.trees.entry(id) {
+        let key = Key::new(id, current_color);
+        if let hash_map::Entry::Vacant(entry) = self.trees.entry(key) {
             let svg = match handle.data() {
                 Data::Path(path) => {
                     fs::read_to_string(path).ok().and_then(|contents| {
@@ -122,12 +149,12 @@ impl Cache {
             let _ = entry.insert(svg);
         }
 
-        let _ = self.tree_hits.insert(id);
-        self.trees.get(&id).unwrap().as_ref()
+        let _ = self.tree_hits.insert(key);
+        self.trees.get(&key).unwrap().as_ref()
     }
 
     fn viewport_dimensions(&mut self, handle: &Handle) -> Option<Size<u32>> {
-        let tree = self.load(handle)?;
+        let tree = self.load(handle, None)?;
         let size = tree.size();
 
         Some(Size::new(size.width() as u32, size.height() as u32))
@@ -137,6 +164,7 @@ impl Cache {
         &mut self,
         handle: &Handle,
         color: Option<Color>,
+        current_color: Option<Color>,
         size: Size<u32>,
     ) -> Option<tiny_skia::PixmapRef<'_>> {
         if size.width == 0 || size.height == 0 {
@@ -146,12 +174,13 @@ impl Cache {
         let key = RasterKey {
             id: handle.id(),
             color: color.map(Color::into_rgba8),
+            current_color: current_color.map(Color::into_rgba8),
             size,
         };
 
         #[allow(clippy::map_entry)]
         if !self.rasters.contains_key(&key) {
-            let tree = self.load(handle)?;
+            let tree = self.load(handle, current_color)?;
 
             let mut image = tiny_skia::Pixmap::new(size.width, size.height)?;
 

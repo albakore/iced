@@ -320,6 +320,7 @@ impl State {
                             belt,
                             &svg.handle,
                             svg.color,
+                            svg.current_color,
                             bounds.size(),
                             scale,
                         )

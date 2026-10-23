@@ -34,21 +34,51 @@ impl Svg {
 /// Caches svg vector and raster data
 #[derive(Debug, Default)]
 pub struct Cache {
-    svgs: FxHashMap<u64, Svg>,
-    rasterized: FxHashMap<(u64, u32, u32, ColorFilter), atlas::Entry>,
-    svg_hits: FxHashSet<u64>,
-    rasterized_hits: FxHashSet<(u64, u32, u32, ColorFilter)>,
+    svgs: FxHashMap<Key, Svg>,
+    rasterized: FxHashMap<RasterKey, atlas::Entry>,
+    svg_hits: FxHashSet<Key>,
+    rasterized_hits: FxHashSet<RasterKey>,
     should_trim: bool,
     fontdb: Option<Arc<usvg::fontdb::Database>>,
 }
 
-type ColorFilter = Option<[u8; 4]>;
+/// Key for identifying SVGs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct Key {
+    id: u64,
+    current_color: ColorKey,
+}
+
+impl Key {
+    pub fn new(id: u64, color: Option<Color>) -> Self {
+        Self {
+            id,
+            current_color: color.map(Color::into_rgba8),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RasterKey {
+    pub id: u64,
+    pub width: u32,
+    pub height: u32,
+    pub color: ColorKey,
+    pub current_color: ColorKey,
+}
+
+type ColorKey = Option<[u8; 4]>;
 
 impl Cache {
     /// Load svg
-    pub fn load(&mut self, handle: &svg::Handle) -> &Svg {
-        if self.svgs.contains_key(&handle.id()) {
-            return self.svgs.get(&handle.id()).unwrap();
+    pub fn load(
+        &mut self,
+        handle: &svg::Handle,
+        current_color: Option<Color>,
+    ) -> &Svg {
+        let key = Key::new(handle.id(), current_color);
+        if self.svgs.contains_key(&key) {
+            return self.svgs.get(&key).unwrap();
         }
 
         // TODO: Reuse `cosmic-text` font database
@@ -68,6 +98,7 @@ impl Cache {
                 .as_ref()
                 .expect("fontdb must be initialized")
                 .clone(),
+            style_sheet: current_color.map(svg::color_style_sheet),
             ..usvg::Options::default()
         };
 
@@ -89,8 +120,9 @@ impl Cache {
 
         self.should_trim = true;
 
-        let _ = self.svgs.insert(handle.id(), svg);
-        self.svgs.get(&handle.id()).unwrap()
+        let key = Key::new(handle.id(), current_color);
+        let _ = self.svgs.insert(key, svg);
+        self.svgs.get(&key).unwrap()
     }
 
     /// Load svg and upload raster data
@@ -101,6 +133,7 @@ impl Cache {
         belt: &mut wgpu::util::StagingBelt,
         handle: &svg::Handle,
         color: Option<Color>,
+        current_color: Option<Color>,
         size: Size,
         scale: f32,
         atlas: &mut Atlas,
@@ -113,20 +146,26 @@ impl Cache {
         );
 
         let color = color.map(Color::into_rgba8);
-        let key = (id, width, height, color);
+        let key = RasterKey {
+            id,
+            width,
+            height,
+            color,
+            current_color: current_color.map(Color::into_rgba8),
+        };
 
         // TODO: Optimize!
         // We currently rerasterize the SVG when its size changes. This is slow
         // as heck. A GPU rasterizer like `pathfinder` may perform better.
         // It would be cool to be able to smooth resize the `svg` example.
         if self.rasterized.contains_key(&key) {
-            let _ = self.svg_hits.insert(id);
+            let _ = self.svg_hits.insert(Key::new(handle.id(), current_color));
             let _ = self.rasterized_hits.insert(key);
 
             return self.rasterized.get(&key);
         }
 
-        match self.load(handle) {
+        match self.load(handle, current_color) {
             Svg::Loaded(tree) => {
                 if width == 0 || height == 0 {
                     return None;
@@ -194,7 +233,8 @@ impl Cache {
 
                 log::debug!("allocating {id} {width}x{height}");
 
-                let _ = self.svg_hits.insert(id);
+                let _ =
+                    self.svg_hits.insert(Key::new(handle.id(), current_color));
                 let _ = self.rasterized_hits.insert(key);
                 let _ = self.rasterized.insert(key, allocation);
                 self.should_trim = true;
