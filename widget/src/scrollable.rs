@@ -904,20 +904,26 @@ where
                     // macOS has its own kinetic scrolling
                     #[cfg(not(target_os = "macos"))]
                     {
-                        match phase {
-                            mouse::ScrollPhase::Started => {
+                        let trackpad = match state.interaction {
+                            Interaction::TrackpadScrolling {
+                                timestamp,
+                                speed,
+                            } => Some((timestamp, speed)),
+                            _ => None,
+                        };
+
+                        match (phase, trackpad) {
+                            (mouse::ScrollPhase::Started, _) => {
                                 state.interaction =
                                     Interaction::TrackpadScrolling {
                                         timestamp: Instant::now(),
                                         speed: Vector::new(0.0, 0.0),
                                     };
                             }
-                            mouse::ScrollPhase::Moved
-                                if let Interaction::TrackpadScrolling {
-                                    timestamp,
-                                    ..
-                                } = state.interaction =>
-                            {
+                            (
+                                mouse::ScrollPhase::Moved,
+                                Some((timestamp, _)),
+                            ) => {
                                 let cur = Instant::now();
                                 state.interaction =
                                     Interaction::TrackpadScrolling {
@@ -928,12 +934,7 @@ where
                                                 .as_secs_f32()),
                                     };
                             }
-                            mouse::ScrollPhase::Ended
-                                if let Interaction::TrackpadScrolling {
-                                    speed,
-                                    ..
-                                } = state.interaction =>
-                            {
+                            (mouse::ScrollPhase::Ended, Some((_, speed))) => {
                                 if speed.x.abs() + speed.y.abs()
                                     > KINETIC_SCROLL_BOUNDARY
                                 {
@@ -947,12 +948,7 @@ where
                                     state.interaction = Interaction::None;
                                 }
                             }
-                            mouse::ScrollPhase::Cancelled
-                                if matches!(
-                                    state.interaction,
-                                    Interaction::TrackpadScrolling { .. }
-                                ) =>
-                            {
+                            (mouse::ScrollPhase::Cancelled, Some(_)) => {
                                 state.interaction = Interaction::None;
                             }
                             _ => {}
