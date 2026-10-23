@@ -2,6 +2,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 pub mod window;
 
+pub mod effect;
 mod engine;
 mod layer;
 mod primitive;
@@ -47,6 +48,10 @@ pub struct Renderer {
     default_text_size: Pixels,
     layers: layer::Stack,
     engine: Engine, // TODO: Shared engine
+
+    // pyzed: effect layers (see `effect`).
+    effects: Vec<effect::Group>,
+    open_effects: Vec<usize>,
 }
 
 impl Renderer {
@@ -56,6 +61,8 @@ impl Renderer {
             default_text_size,
             layers: layer::Stack::new(),
             engine: Engine::new(),
+            effects: Vec::new(),
+            open_effects: Vec::new(),
         }
     }
 
@@ -73,8 +80,13 @@ impl Renderer {
         background_color: Color,
     ) {
         let scale_factor = viewport.scale_factor();
+        let (width, height) = (pixels.width(), pixels.height());
 
         self.layers.flush();
+
+        // pyzed: effect groups, outermost first.
+        let mut groups = self.effects.clone();
+        groups.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
 
         for &damage_bounds in damage {
             let damage_bounds = damage_bounds * scale_factor;
@@ -104,99 +116,335 @@ impl Renderer {
                 None,
             );
 
-            for layer in self.layers.iter() {
-                let Some(layer_bounds) =
-                    damage_bounds.intersection(&(layer.bounds * scale_factor))
-                else {
-                    continue;
-                };
+            // pyzed: the pixmaps of the open effect groups, with their blurred backdrops.
+            let mut stack: Vec<(tiny_skia::Pixmap, Option<tiny_skia::Pixmap>)> =
+                Vec::new();
 
-                engine::adjust_clip_mask(clip_mask, layer_bounds);
+            for (index, layer) in self.layers.iter().enumerate() {
+                for group in groups.iter().filter(|g| g.start == index) {
+                    let backdrop =
+                        (group.effect.backdrop_blur > 0.0).then(|| {
+                            let mut source = match stack.last() {
+                                Some((pixmap, _)) => pixmap.clone(),
+                                None => pixels.as_ref().to_owned(),
+                            };
+                            let radius =
+                                group.effect.backdrop_blur * scale_factor;
+                            if let Some(region) = effect::region(
+                                group.effect.bounds * scale_factor,
+                                radius * 1.5,
+                                width,
+                                height,
+                            ) {
+                                effect::blur(&mut source, region, radius);
+                            }
+                            source
+                        });
+                    stack.push((
+                        tiny_skia::Pixmap::new(width, height)
+                            .expect("Create effect pixmap"),
+                        backdrop,
+                    ));
+                }
 
-                if !layer.quads.is_empty() {
-                    let render_span = debug::render(debug::Primitive::Quad);
-                    for (quad, background) in &layer.quads {
-                        self.engine.draw_quad(
-                            quad,
-                            background,
-                            Transformation::scale(scale_factor),
+                match stack.last_mut() {
+                    Some((pixmap, _)) => draw_layer(
+                        &mut self.engine,
+                        layer,
+                        &mut pixmap.as_mut(),
+                        clip_mask,
+                        damage_bounds,
+                        scale_factor,
+                    ),
+                    None => draw_layer(
+                        &mut self.engine,
+                        layer,
+                        pixels,
+                        clip_mask,
+                        damage_bounds,
+                        scale_factor,
+                    ),
+                }
+
+                // pyzed: composite the groups that end after this layer, innermost first.
+                for group in groups.iter().rev().filter(|g| g.end == index + 1)
+                {
+                    let Some((mut content, backdrop)) = stack.pop() else {
+                        continue;
+                    };
+                    match stack.last_mut() {
+                        Some((pixmap, _)) => composite(
+                            &mut pixmap.as_mut(),
+                            clip_mask,
+                            &mut content,
+                            backdrop.as_ref(),
+                            group,
+                            damage_bounds,
+                            scale_factor,
+                        ),
+                        None => composite(
                             pixels,
                             clip_mask,
-                            layer_bounds,
-                        );
+                            &mut content,
+                            backdrop.as_ref(),
+                            group,
+                            damage_bounds,
+                            scale_factor,
+                        ),
                     }
-                    render_span.finish();
-                }
-
-                if !layer.primitives.is_empty() {
-                    let render_span = debug::render(debug::Primitive::Triangle);
-
-                    for group in &layer.primitives {
-                        let Some(group_bounds) = (group.clip_bounds()
-                            * scale_factor)
-                            .intersection(&layer_bounds)
-                        else {
-                            continue;
-                        };
-
-                        engine::adjust_clip_mask(clip_mask, group_bounds);
-
-                        for primitive in group.as_slice() {
-                            self.engine.draw_primitive(
-                                primitive,
-                                Transformation::scale(scale_factor)
-                                    * group.transformation(),
-                                pixels,
-                                clip_mask,
-                                group_bounds,
-                            );
-                        }
-
-                        engine::adjust_clip_mask(clip_mask, layer_bounds);
-                    }
-
-                    render_span.finish();
-                }
-
-                if !layer.images.is_empty() {
-                    let render_span = debug::render(debug::Primitive::Image);
-
-                    for image in &layer.images {
-                        self.engine.draw_image(
-                            image,
-                            Transformation::scale(scale_factor),
-                            pixels,
-                            clip_mask,
-                            layer_bounds,
-                        );
-                    }
-
-                    render_span.finish();
-                }
-
-                if !layer.text.is_empty() {
-                    let render_span = debug::render(debug::Primitive::Image);
-
-                    for group in &layer.text {
-                        for text in group.as_slice() {
-                            self.engine.draw_text(
-                                text,
-                                Transformation::scale(scale_factor)
-                                    * group.transformation(),
-                                pixels,
-                                clip_mask,
-                                layer_bounds,
-                            );
-                        }
-                    }
-
-                    render_span.finish();
                 }
             }
         }
 
         self.engine.trim();
     }
+
+    /// pyzed: whether the last frame drew effect layers (they need a full redraw).
+    pub fn has_effects(&self) -> bool {
+        !self.effects.is_empty()
+    }
+
+    /// pyzed: starts drawing a group of layers that is composited with `effect`.
+    pub fn start_effect(&mut self, effect: effect::Effect) {
+        let (layer, transformation) = self.layers.current_mut();
+        let clip = layer.bounds;
+        let mut effect = effect;
+        effect.bounds = effect.bounds * transformation;
+        let scale = transformation.scale_factor();
+        effect.radius = effect.radius.map(|r| r * scale);
+        effect.blur *= scale;
+        effect.backdrop_blur *= scale;
+        if let Some(bloom) = &mut effect.bloom {
+            bloom.radius *= scale;
+        }
+
+        // `push_clip` transforms its bounds; the clip of the current layer already is.
+        self.layers.push_clip(clip * transformation.inverse());
+        let start = self.layers.as_slice().len() - 1;
+        self.open_effects.push(self.effects.len());
+        self.effects.push(effect::Group {
+            start,
+            end: start + 1,
+            effect,
+            clip,
+        });
+    }
+
+    /// pyzed: ends the group started by the last [`Renderer::start_effect`].
+    pub fn end_effect(&mut self) {
+        self.layers.pop_clip();
+        if let Some(open) = self.open_effects.pop() {
+            self.effects[open].end = self.layers.as_slice().len();
+        }
+    }
+}
+
+/// pyzed: draws one layer (the body of iced's draw loop).
+fn draw_layer(
+    engine: &mut Engine,
+    layer: &Layer,
+    pixels: &mut tiny_skia::PixmapMut<'_>,
+    clip_mask: &mut tiny_skia::Mask,
+    damage_bounds: Rectangle,
+    scale_factor: f32,
+) {
+    let Some(layer_bounds) =
+        damage_bounds.intersection(&(layer.bounds * scale_factor))
+    else {
+        return;
+    };
+
+    engine::adjust_clip_mask(clip_mask, layer_bounds);
+
+    if !layer.quads.is_empty() {
+        let render_span = debug::render(debug::Primitive::Quad);
+        for (quad, background) in &layer.quads {
+            engine.draw_quad(
+                quad,
+                background,
+                Transformation::scale(scale_factor),
+                pixels,
+                clip_mask,
+                layer_bounds,
+            );
+        }
+        render_span.finish();
+    }
+
+    if !layer.primitives.is_empty() {
+        let render_span = debug::render(debug::Primitive::Triangle);
+
+        for group in &layer.primitives {
+            let Some(group_bounds) = (group.clip_bounds() * scale_factor)
+                .intersection(&layer_bounds)
+            else {
+                continue;
+            };
+
+            engine::adjust_clip_mask(clip_mask, group_bounds);
+
+            for primitive in group.as_slice() {
+                engine.draw_primitive(
+                    primitive,
+                    Transformation::scale(scale_factor)
+                        * group.transformation(),
+                    pixels,
+                    clip_mask,
+                    group_bounds,
+                );
+            }
+
+            engine::adjust_clip_mask(clip_mask, layer_bounds);
+        }
+
+        render_span.finish();
+    }
+
+    if !layer.images.is_empty() {
+        let render_span = debug::render(debug::Primitive::Image);
+
+        for image in &layer.images {
+            engine.draw_image(
+                image,
+                Transformation::scale(scale_factor),
+                pixels,
+                clip_mask,
+                layer_bounds,
+            );
+        }
+
+        render_span.finish();
+    }
+
+    if !layer.text.is_empty() {
+        let render_span = debug::render(debug::Primitive::Image);
+
+        for group in &layer.text {
+            for text in group.as_slice() {
+                engine.draw_text(
+                    text,
+                    Transformation::scale(scale_factor)
+                        * group.transformation(),
+                    pixels,
+                    clip_mask,
+                    layer_bounds,
+                );
+            }
+        }
+
+        render_span.finish();
+    }
+}
+
+/// pyzed: draws a finished effect group onto `target`.
+fn composite(
+    target: &mut tiny_skia::PixmapMut<'_>,
+    clip_mask: &mut tiny_skia::Mask,
+    content: &mut tiny_skia::Pixmap,
+    backdrop: Option<&tiny_skia::Pixmap>,
+    group: &effect::Group,
+    damage_bounds: Rectangle,
+    scale_factor: f32,
+) {
+    let Some(clip) = (group.clip * scale_factor).intersection(&damage_bounds)
+    else {
+        return;
+    };
+    engine::adjust_clip_mask(clip_mask, clip);
+
+    let fx = &group.effect;
+    let bounds = fx.bounds * scale_factor;
+    let center = bounds.center();
+    let transform = tiny_skia::Transform::from_rotate_at(
+        fx.rotation.to_degrees(),
+        center.x,
+        center.y,
+    );
+    let opacity = fx.opacity.clamp(0.0, 1.0);
+    let (width, height) = (content.width(), content.height());
+    let region = effect::region(group.clip * scale_factor, 0.0, width, height);
+
+    let light = fx.bloom.filter(|b| b.intensity > 0.0).map(|bloom| {
+        let mut light = effect::bright(content, bloom.threshold, bloom.color);
+        if let Some(region) = region {
+            effect::blur(
+                &mut light,
+                region,
+                bloom.radius.max(1.0) * scale_factor,
+            );
+        }
+        (light, bloom.intensity)
+    });
+
+    if fx.blur > 0.0 {
+        if let Some(region) = region {
+            effect::blur(content, region, fx.blur * scale_factor);
+        }
+    }
+
+    if let Some(backdrop) = backdrop {
+        let mut mask = clip_mask.clone();
+        mask.intersect_path(
+            &engine::rounded_rectangle(
+                bounds,
+                fx.radius.map(|r| r * scale_factor),
+            ),
+            tiny_skia::FillRule::Winding,
+            true,
+            transform,
+        );
+        target.draw_pixmap(
+            0,
+            0,
+            backdrop.as_ref(),
+            &tiny_skia::PixmapPaint {
+                opacity,
+                blend_mode: tiny_skia::BlendMode::SourceOver,
+                quality: tiny_skia::FilterQuality::Nearest,
+            },
+            tiny_skia::Transform::identity(),
+            Some(&mask),
+        );
+    }
+
+    let quality = if fx.rotation == 0.0 {
+        tiny_skia::FilterQuality::Nearest
+    } else {
+        tiny_skia::FilterQuality::Bilinear
+    };
+
+    // The light goes under the content, so the content stays legible.
+    if let Some((light, intensity)) = light {
+        let mut strength = intensity * opacity;
+        while strength > 0.0 {
+            target.draw_pixmap(
+                0,
+                0,
+                light.as_ref(),
+                &tiny_skia::PixmapPaint {
+                    opacity: strength.min(1.0),
+                    blend_mode: tiny_skia::BlendMode::Plus,
+                    quality,
+                },
+                transform,
+                Some(clip_mask),
+            );
+            strength -= 1.0;
+        }
+    }
+
+    target.draw_pixmap(
+        0,
+        0,
+        content.as_ref(),
+        &tiny_skia::PixmapPaint {
+            opacity,
+            blend_mode: tiny_skia::BlendMode::SourceOver,
+            quality,
+        },
+        transform,
+        Some(clip_mask),
+    );
 }
 
 impl core::Renderer for Renderer {
@@ -227,6 +475,8 @@ impl core::Renderer for Renderer {
 
     fn reset(&mut self, new_bounds: Rectangle) {
         self.layers.reset(new_bounds);
+        self.effects.clear();
+        self.open_effects.clear();
     }
 
     fn allocate_image(

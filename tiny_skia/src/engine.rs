@@ -42,8 +42,9 @@ impl Engine {
             return;
         }
 
-        let clip_mask = (!physical_bounds.is_within(&clip_bounds))
-            .then_some(clip_mask as &_);
+        let mask: &tiny_skia::Mask = clip_mask;
+        let clip_mask =
+            (!physical_bounds.is_within(&clip_bounds)).then_some(mask);
 
         let transform = into_transform(transformation);
 
@@ -125,6 +126,9 @@ impl Engine {
                 })
                 .collect();
 
+            // pyzed: clip the shadow too, or redrawing a damaged region darkens the rest of the shadowed box.
+            let shadow_clip =
+                (!shadow_bounds.is_within(&clip_bounds)).then_some(mask);
             if let Some(pixmap) = tiny_skia::IntSize::from_wh(width, height)
                 .and_then(|size| {
                     tiny_skia::Pixmap::from_vec(
@@ -139,7 +143,7 @@ impl Engine {
                     pixmap.as_ref(),
                     &tiny_skia::PixmapPaint::default(),
                     tiny_skia::Transform::default(),
-                    None,
+                    shadow_clip,
                 );
             }
         }
@@ -665,7 +669,7 @@ fn into_transform(transformation: Transformation) -> tiny_skia::Transform {
     }
 }
 
-fn rounded_rectangle(
+pub(crate) fn rounded_rectangle(
     bounds: Rectangle,
     border_radius: [f32; 4],
 ) -> tiny_skia::Path {
