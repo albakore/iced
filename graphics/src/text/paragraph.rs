@@ -83,6 +83,8 @@ impl core::text::Paragraph for Paragraph {
         );
 
         buffer.set_wrap(font_system.raw(), text::to_wrap(text.wrapping));
+        // pyzed: tabs as wide as in the editors.
+        buffer.set_tab_width(font_system.raw(), text::tab_width());
 
         buffer.set_text(
             font_system.raw(),
