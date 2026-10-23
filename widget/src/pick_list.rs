@@ -168,6 +168,7 @@ pub struct PickList<
     text_size: Option<Pixels>,
     text_line_height: text::LineHeight,
     text_shaping: text::Shaping,
+    letter_spacing: crate::core::Em,
     font: Option<Renderer::Font>,
     handle: Handle<Renderer::Font>,
     class: <Theme as Catalog>::Class<'a>,
@@ -205,6 +206,7 @@ where
             text_size: None,
             text_line_height: text::LineHeight::default(),
             text_shaping: text::Shaping::default(),
+            letter_spacing: crate::core::Em::default(),
             font: None,
             handle: Handle::default(),
             class: <Theme as Catalog>::default(),
@@ -256,6 +258,15 @@ where
     /// Sets the [`text::Shaping`] strategy of the [`PickList`].
     pub fn text_shaping(mut self, shaping: text::Shaping) -> Self {
         self.text_shaping = shaping;
+        self
+    }
+
+    /// Sets the letter spacing of the [`PickList`].
+    pub fn letter_spacing(
+        mut self,
+        letter_spacing: impl Into<crate::core::Em>,
+    ) -> Self {
+        self.letter_spacing = letter_spacing.into();
         self
     }
 
@@ -382,6 +393,7 @@ where
             align_y: alignment::Vertical::Center,
             shaping: self.text_shaping,
             wrapping: text::Wrapping::default(),
+            letter_spacing: self.letter_spacing,
         };
 
         for (option, paragraph) in options.iter().zip(state.options.iter_mut())
@@ -650,6 +662,7 @@ where
                     align_y: alignment::Vertical::Center,
                     shaping,
                     wrapping: text::Wrapping::default(),
+                    letter_spacing: crate::core::Em::default(),
                 },
                 Point::new(
                     bounds.x + bounds.width - self.padding.right,
@@ -680,6 +693,7 @@ where
                     align_y: alignment::Vertical::Center,
                     shaping: self.text_shaping,
                     wrapping: text::Wrapping::default(),
+                    letter_spacing: self.letter_spacing,
                 },
                 Point::new(bounds.x + self.padding.left, bounds.center_y()),
                 if selected.is_some() {
@@ -723,7 +737,8 @@ where
             .width(bounds.width)
             .padding(self.padding)
             .font(font)
-            .text_shaping(self.text_shaping);
+            .text_shaping(self.text_shaping)
+            .letter_spacing(self.letter_spacing);
 
             if let Some(text_size) = self.text_size {
                 menu = menu.text_size(text_size);

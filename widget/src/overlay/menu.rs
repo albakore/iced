@@ -40,6 +40,7 @@ pub struct Menu<
     text_size: Option<Pixels>,
     text_line_height: text::LineHeight,
     text_shaping: text::Shaping,
+    letter_spacing: crate::core::Em,
     font: Option<Renderer::Font>,
     class: &'a <Theme as Catalog>::Class<'b>,
 }
@@ -75,6 +76,7 @@ where
             text_size: None,
             text_line_height: text::LineHeight::default(),
             text_shaping: text::Shaping::default(),
+            letter_spacing: crate::core::Em::default(),
             font: None,
             class,
         }
@@ -119,6 +121,15 @@ where
         on_scroll: &'a dyn Fn(Viewport) -> Message,
     ) -> Self {
         self.on_scroll = Some(on_scroll);
+        self
+    }
+
+    /// Sets the letter spacing of the [`Menu`].
+    pub fn letter_spacing(
+        mut self,
+        letter_spacing: impl Into<crate::core::Em>,
+    ) -> Self {
+        self.letter_spacing = letter_spacing.into();
         self
     }
 
@@ -216,6 +227,7 @@ where
             text_size,
             text_line_height,
             text_shaping,
+            letter_spacing,
             class,
         } = menu;
 
@@ -228,6 +240,7 @@ where
             text_size,
             text_line_height,
             text_shaping,
+            letter_spacing,
             padding,
             class,
         })
@@ -360,6 +373,7 @@ where
     text_size: Option<Pixels>,
     text_line_height: text::LineHeight,
     text_shaping: text::Shaping,
+    letter_spacing: crate::core::Em,
     font: Option<Renderer::Font>,
     class: &'a <Theme as Catalog>::Class<'b>,
 }
@@ -583,6 +597,7 @@ where
                     align_y: alignment::Vertical::Center,
                     shaping: self.text_shaping,
                     wrapping: text::Wrapping::default(),
+                    letter_spacing: self.letter_spacing,
                 },
                 Point::new(bounds.x + self.padding.left, bounds.center_y()),
                 if is_selected {

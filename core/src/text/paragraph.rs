@@ -3,7 +3,7 @@ use crate::alignment;
 use crate::text::{
     Alignment, Difference, Hit, LineHeight, Shaping, Span, Text, Wrapping,
 };
-use crate::{Pixels, Point, Rectangle, Size};
+use crate::{Em, Pixels, Point, Rectangle, Size};
 
 /// A text paragraph.
 pub trait Paragraph: Sized + Default {
@@ -45,6 +45,9 @@ pub trait Paragraph: Sized + Default {
 
     /// Returns the [`Shaping`] strategy of the [`Paragraph`]>
     fn shaping(&self) -> Shaping;
+
+    /// Returns the letter spacing of the [`Paragraph`].
+    fn letter_spacing(&self) -> Em;
 
     /// Returns the available bounds used to layout the [`Paragraph`].
     fn bounds(&self) -> Size;
@@ -169,6 +172,7 @@ impl<P: Paragraph> Plain<P> {
             align_y: self.raw.align_y(),
             shaping: self.raw.shaping(),
             wrapping: self.raw.wrapping(),
+            letter_spacing: self.raw.letter_spacing(),
         }
     }
 }

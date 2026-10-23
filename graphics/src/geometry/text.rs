@@ -1,7 +1,7 @@
 use crate::core;
 use crate::core::alignment;
 use crate::core::text::{Alignment, LineHeight, Paragraph, Shaping, Wrapping};
-use crate::core::{Color, Font, Pixels, Point, Size, Vector};
+use crate::core::{Color, Em, Font, Pixels, Point, Size, Vector};
 use crate::geometry::Path;
 use crate::text;
 
@@ -40,6 +40,8 @@ pub struct Text {
     pub align_y: alignment::Vertical,
     /// The shaping strategy of the text.
     pub shaping: Shaping,
+    /// The letter spacing of the text.
+    pub letter_spacing: Em,
 }
 
 impl Text {
@@ -56,6 +58,7 @@ impl Text {
             align_y: self.align_y,
             shaping: self.shaping,
             wrapping: Wrapping::default(),
+            letter_spacing: self.letter_spacing,
         });
 
         let translation_x = match self.align_x {
@@ -177,6 +180,7 @@ impl Default for Text {
             align_x: Alignment::Default,
             align_y: alignment::Vertical::Top,
             shaping: Shaping::default(),
+            letter_spacing: Em::ZERO,
         }
     }
 }

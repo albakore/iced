@@ -96,6 +96,7 @@ pub struct Toggler<
     text_alignment: text::Alignment,
     text_shaping: text::Shaping,
     text_wrapping: text::Wrapping,
+    letter_spacing: crate::core::Em,
     spacing: f32,
     font: Option<Renderer::Font>,
     class: Theme::Class<'a>,
@@ -130,6 +131,7 @@ where
             text_alignment: text::Alignment::Default,
             text_shaping: text::Shaping::default(),
             text_wrapping: text::Wrapping::default(),
+            letter_spacing: crate::core::Em::default(),
             spacing: Self::DEFAULT_SIZE / 2.0,
             font: None,
             class: Theme::default(),
@@ -212,6 +214,15 @@ where
     /// Sets the [`text::Wrapping`] strategy of the [`Toggler`].
     pub fn text_wrapping(mut self, wrapping: text::Wrapping) -> Self {
         self.text_wrapping = wrapping;
+        self
+    }
+
+    /// Sets the letter spacing of the [`Toggler`].
+    pub fn letter_spacing(
+        mut self,
+        letter_spacing: impl Into<crate::core::Em>,
+    ) -> Self {
+        self.letter_spacing = letter_spacing.into();
         self
     }
 
@@ -306,6 +317,7 @@ where
                             align_y: alignment::Vertical::Top,
                             shaping: self.text_shaping,
                             wrapping: self.text_wrapping,
+                            letter_spacing: self.letter_spacing,
                         },
                     )
                 } else {

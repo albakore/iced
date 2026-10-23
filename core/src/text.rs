@@ -9,7 +9,7 @@ pub use paragraph::Paragraph;
 
 use crate::alignment;
 use crate::{
-    Background, Border, Color, Padding, Pixels, Point, Rectangle, Size,
+    Background, Border, Color, Em, Padding, Pixels, Point, Rectangle, Size,
 };
 
 use std::borrow::Cow;
@@ -44,6 +44,9 @@ pub struct Text<Content = String, Font = crate::Font> {
 
     /// The [`Wrapping`] strategy of the [`Text`].
     pub wrapping: Wrapping,
+
+    /// The letter spacing of the [`Text`].
+    pub letter_spacing: Em,
 }
 
 impl<Content, Font> Text<Content, Font>
@@ -63,6 +66,7 @@ where
             align_y: self.align_y,
             shaping: self.shaping,
             wrapping: self.wrapping,
+            letter_spacing: self.letter_spacing,
         }
     }
 }
@@ -399,6 +403,8 @@ pub struct Span<'a, Link = (), Font = crate::Font> {
     pub underline: bool,
     /// Whether the [`Span`] should be struck through or not.
     pub strikethrough: bool,
+    /// The letter spacing of the [`Span`].
+    pub letter_spacing: Option<Em>,
 }
 
 /// A text highlight.
@@ -552,6 +558,12 @@ impl<'a, Link, Font> Span<'a, Link, Font> {
         self
     }
 
+    /// Sets the letter spacing of the [`Span`].
+    pub fn letter_spacing(mut self, letter_spacing: impl Into<Em>) -> Self {
+        self.letter_spacing = Some(letter_spacing.into());
+        self
+    }
+
     /// Turns the [`Span`] into a static one.
     pub fn to_static(self) -> Span<'static, Link, Font> {
         Span {
@@ -565,6 +577,7 @@ impl<'a, Link, Font> Span<'a, Link, Font> {
             padding: self.padding,
             underline: self.underline,
             strikethrough: self.strikethrough,
+            letter_spacing: self.letter_spacing,
         }
     }
 }
@@ -582,6 +595,7 @@ impl<Link, Font> Default for Span<'_, Link, Font> {
             padding: Padding::default(),
             underline: false,
             strikethrough: false,
+            letter_spacing: None,
         }
     }
 }
@@ -599,6 +613,7 @@ impl<Link, Font: PartialEq> PartialEq for Span<'_, Link, Font> {
             && self.line_height == other.line_height
             && self.font == other.font
             && self.color == other.color
+            && self.letter_spacing == other.letter_spacing
     }
 }
 

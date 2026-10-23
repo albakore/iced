@@ -1486,6 +1486,7 @@ where
                 align_y: alignment::Vertical::Center,
                 shaping: text::Shaping::Basic,
                 wrapping: text::Wrapping::None,
+                letter_spacing: crate::core::Em::default(),
             };
 
             if self.vertical {
