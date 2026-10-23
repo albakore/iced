@@ -35,6 +35,9 @@ pub struct Settings {
     /// [WebGPU specification]: https://www.w3.org/TR/webgpu/#limits
     /// [`Shader`]: https://docs.rs/iced/latest/iced/widget/shader/index.html
     pub max_bind_groups: u32,
+
+    /// pyzed: the presentation, GPU and frame rate settings, with the environment applied.
+    pub rendering: core::settings::Rendering,
 }
 
 impl Default for Settings {
@@ -45,12 +48,17 @@ impl Default for Settings {
             antialiasing: None,
             vsync: true,
             max_bind_groups: 4,
+            rendering: core::settings::Rendering::default(),
         }
     }
 }
 
 impl From<core::Settings> for Settings {
     fn from(settings: core::Settings) -> Self {
+        // pyzed: the environment can retune a deployed app (`ICED_MSAA`, `ICED_MAX_FPS`...).
+        let (rendering, antialiasing) =
+            settings.rendering.with_env(settings.antialiasing);
+
         Self {
             default_font: if cfg!(all(
                 target_arch = "wasm32",
@@ -62,9 +70,12 @@ impl From<core::Settings> for Settings {
                 settings.default_font
             },
             default_text_size: settings.default_text_size,
-            antialiasing: settings.antialiasing.then_some(Antialiasing::MSAAx4),
+            antialiasing: antialiasing
+                .then_some(Antialiasing::from_samples(rendering.samples))
+                .flatten(),
             vsync: settings.vsync,
             max_bind_groups: 4,
+            rendering,
         }
     }
 }

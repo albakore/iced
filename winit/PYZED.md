@@ -11,3 +11,13 @@ The changes are marked `pyzed:`:
   and when it comes back they get new ones and redraw. `Window::surface` is an `Option` for that.
 - `src/window.rs`: a tap while an input keeps the focus shows the soft keyboard again (the user
   may have closed it with the back button).
+- `src/window.rs`: animation frames (`RedrawRequest`) wait for the frame rate limits of
+  `Settings::rendering` (`max_fps`, and `background_fps` without the focus, where 0 pauses them),
+  and a window covered whole (`Occluded`) skips its frames; both draw the skipped frame when the
+  window gets the focus back or shows again. Input and new content still draw at once.
+- `src/lib.rs`: `quiet::set_unchanged` names the windows a message did not change after each
+  update; they keep their layout and are not redrawn. `quiet::graphics` returns the adapter and
+  backend of the compositor.
+- `src/conversion.rs`, `src/lib.rs`: fullscreen on the monitor of `window::Settings::monitor`
+  or of `window::Action::SetFullscreen`, exclusive with the monitor's best video mode except on
+  Wayland; `window::Action::SetCursorHidden` keeps the pointer hidden over a window.

@@ -1,7 +1,7 @@
 //! Build window-based GUI applications.
 use crate::core::time::Instant;
 use crate::core::window::{
-    Direction, Event, Icon, Id, Level, Mode, Screenshot, Settings,
+    Direction, Event, Fullscreen, Icon, Id, Level, Mode, Screenshot, Settings,
     UserAttention, cursor,
 };
 use crate::core::{Point, Size};
@@ -81,6 +81,12 @@ pub enum Action {
 
     /// Get the current [`Mode`] of the window.
     GetMode(Id, oneshot::Sender<Mode>),
+
+    /// pyzed: make the window fullscreen on a monitor ([`Fullscreen`]), or windowed with `None`.
+    SetFullscreen(Id, Option<Fullscreen>),
+
+    /// pyzed: hide the pointer over the window whatever the widgets ask, or show it again.
+    SetCursorHidden(Id, bool),
 
     /// Toggle the window to maximized or back
     ToggleMaximize(Id),
@@ -423,6 +429,18 @@ pub fn mode(id: Id) -> Task<Mode> {
 /// Changes the [`Mode`] of the window.
 pub fn set_mode<T>(id: Id, mode: Mode) -> Task<T> {
     task::effect(crate::Action::Window(Action::SetMode(id, mode)))
+}
+
+/// pyzed: makes the window fullscreen on a monitor, maybe exclusive ([`Fullscreen`]), or
+/// windowed again with `None`.
+pub fn set_fullscreen<T>(id: Id, fullscreen: Option<Fullscreen>) -> Task<T> {
+    task::effect(crate::Action::Window(Action::SetFullscreen(id, fullscreen)))
+}
+
+/// pyzed: hides the pointer over the window whatever the widgets ask (kiosks, touch panels),
+/// or shows it again.
+pub fn set_cursor_hidden<T>(id: Id, hidden: bool) -> Task<T> {
+    task::effect(crate::Action::Window(Action::SetCursorHidden(id, hidden)))
 }
 
 /// Toggles the window to maximized or back.

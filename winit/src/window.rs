@@ -25,6 +25,7 @@ use winit::monitor::MonitorHandle;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub struct WindowManager<P, C>
 where
@@ -34,6 +35,38 @@ where
 {
     aliases: BTreeMap<winit::window::WindowId, Id>,
     entries: BTreeMap<Id, Window<P, C>>,
+    /// pyzed: the frame rate limits of the animations.
+    pacing: Pacing,
+}
+
+/// pyzed: how soon a window may draw the next animation frame.
+#[derive(Debug, Clone, Copy)]
+enum Limit {
+    /// At most once per interval (`None`: whenever asked).
+    Every(Option<Duration>),
+    /// Not until the window gets the focus back.
+    Paused,
+}
+
+/// pyzed: the frame rate limits of the animations of each window.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Pacing {
+    /// The shortest time between two animation frames of a focused window.
+    pub focused: Option<Duration>,
+    /// The same for a window without the focus; `Some(None)` pauses its animations.
+    pub background: Option<Option<Duration>>,
+}
+
+impl Pacing {
+    pub fn new(max_fps: Option<u16>, background_fps: Option<u16>) -> Self {
+        let interval = |fps: u16| Duration::from_secs_f64(1.0 / f64::from(fps));
+
+        Self {
+            focused: max_fps.filter(|fps| *fps > 0).map(interval),
+            background: background_fps
+                .map(|fps| (fps > 0).then(|| interval(fps))),
+        }
+    }
 }
 
 impl<P, C> WindowManager<P, C>
@@ -46,7 +79,13 @@ where
         Self {
             aliases: BTreeMap::new(),
             entries: BTreeMap::new(),
+            pacing: Pacing::default(),
         }
+    }
+
+    /// pyzed: sets the frame rate limits of the windows opened from now on.
+    pub fn set_pacing(&mut self, pacing: Pacing) {
+        self.pacing = pacing;
     }
 
     pub fn insert(
@@ -59,6 +98,7 @@ where
         system_theme: theme::Mode,
     ) -> &mut Window<P, C> {
         let state = State::new(program, id, &window, system_theme);
+        let focused = window.has_focus();
         let surface_size = state.physical_size();
         let surface_version = state.surface_version();
         let surface = compositor.create_surface(
@@ -81,6 +121,12 @@ where
                 renderer,
                 mouse_interaction: mouse::Interaction::None,
                 redraw_at: None,
+                pacing: self.pacing,
+                focused,
+                occluded: false,
+                deferred: false,
+                last_frame: None,
+                cursor_hidden: false,
                 preedit: None,
                 ime_state: None,
                 #[cfg(target_os = "android")]
@@ -175,6 +221,18 @@ where
     pub surface_version: u64,
     pub renderer: P::Renderer,
     pub redraw_at: Option<Instant>,
+    /// pyzed: the frame rate limits of its animations.
+    pacing: Pacing,
+    /// pyzed: whether it has the keyboard focus (for the background frame rate).
+    pub focused: bool,
+    /// pyzed: whether another window or the screen saver covers it whole; it does not draw.
+    pub occluded: bool,
+    /// pyzed: a frame was skipped (covered or paused) and is drawn when it shows again.
+    pub deferred: bool,
+    /// pyzed: when the last frame was presented.
+    pub last_frame: Option<Instant>,
+    /// pyzed: the pointer is hidden over it whatever the widgets ask (kiosks, touch panels).
+    pub cursor_hidden: bool,
     preedit: Option<Preedit<P::Renderer>>,
     ime_state: Option<(Rectangle, input_method::Purpose)>,
     /// pyzed: the screen was touched since the last input method request.
@@ -204,15 +262,53 @@ where
     }
 
     pub fn request_redraw(&mut self, redraw_request: RedrawRequest) {
-        match redraw_request {
-            RedrawRequest::NextFrame => {
-                self.raw.request_redraw();
-                self.redraw_at = None;
+        // pyzed: the frames that animations ask for wait for the frame rate limit
+        let limit = if self.focused {
+            Limit::Every(self.pacing.focused)
+        } else {
+            match self.pacing.background {
+                Some(Some(interval)) => Limit::Every(Some(interval)),
+                Some(None) => Limit::Paused,
+                None => Limit::Every(self.pacing.focused),
             }
-            RedrawRequest::At(at) => {
-                self.redraw_at = Some(at);
+        };
+
+        let earliest = |interval: Option<Duration>| {
+            interval.zip(self.last_frame).map(|(gap, last)| last + gap)
+        };
+
+        match (redraw_request, limit) {
+            (RedrawRequest::Wait, _) => {}
+            // Paused without the focus: drawn when the window gets it back
+            (_, Limit::Paused) => {
+                self.deferred = true;
             }
-            RedrawRequest::Wait => {}
+            (RedrawRequest::NextFrame, Limit::Every(interval)) => {
+                match earliest(interval) {
+                    Some(at) if at > Instant::now() => {
+                        self.redraw_at = Some(
+                            self.redraw_at.map_or(at, |next| next.min(at)),
+                        );
+                    }
+                    _ => {
+                        self.raw.request_redraw();
+                        self.redraw_at = None;
+                    }
+                }
+            }
+            (RedrawRequest::At(at), Limit::Every(interval)) => {
+                self.redraw_at = Some(match earliest(interval) {
+                    Some(earliest) => at.max(earliest),
+                    None => at,
+                });
+            }
+        }
+    }
+
+    /// pyzed: draws the frame that was skipped while the window was covered or paused.
+    pub fn resume(&mut self) {
+        if std::mem::take(&mut self.deferred) {
+            self.raw.request_redraw();
         }
     }
 
@@ -264,6 +360,12 @@ where
         cursor_registry: &CursorRegistry,
         interaction: mouse::Interaction,
     ) {
+        let interaction = if self.cursor_hidden {
+            mouse::Interaction::Hidden
+        } else {
+            interaction
+        };
+
         if interaction != self.mouse_interaction {
             if let mouse::Interaction::Custom(id) = interaction {
                 if let Some(cursor) = cursor_registry.get(&id) {

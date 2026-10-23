@@ -68,6 +68,42 @@ pub mod quiet {
         }
         drop(messages.drain(..handled));
     }
+
+    pub(crate) static GRAPHICS: OnceLock<
+        crate::graphics::compositor::Information,
+    > = OnceLock::new();
+
+    /// The GPU (or `"CPU"`) and the graphics backend drawing the windows, once the first
+    /// window is open.
+    pub fn graphics() -> Option<(String, String)> {
+        GRAPHICS
+            .get()
+            .map(|info| (info.adapter.clone(), info.backend.clone()))
+    }
+
+    pub(crate) static UNCHANGED: OnceLock<
+        fn(&[crate::core::window::Id]) -> Vec<crate::core::window::Id>,
+    > = OnceLock::new();
+
+    /// Installs `unchanged` (only the first call counts). After each update it gets the windows
+    /// about to be rebuilt and returns those whose view did not change: they keep their layout
+    /// and are not redrawn. Their view is still built, since it borrows the new state.
+    pub fn set_unchanged(
+        unchanged: fn(
+            &[crate::core::window::Id],
+        ) -> Vec<crate::core::window::Id>,
+    ) {
+        let _ = UNCHANGED.set(unchanged);
+    }
+
+    pub(crate) fn unchanged(
+        windows: &[crate::core::window::Id],
+    ) -> Vec<crate::core::window::Id> {
+        UNCHANGED
+            .get()
+            .map(|unchanged| unchanged(windows))
+            .unwrap_or_default()
+    }
 }
 
 pub use program::core;
@@ -407,20 +443,27 @@ where
                                 last_monitor,
                                 on_open,
                             } => {
-                                let requested_monitor = match settings.position
-                                {
+                                let requested_index = match settings.position {
                                     core::window::Position::Default => None,
                                     core::window::Position::Centered => None,
                                     core::window::Position::Specific(
                                         position,
-                                    ) => position.monitor_index.and_then(
-                                        |index| {
-                                            event_loop
-                                                .available_monitors()
-                                                .nth(index.0)
-                                        },
-                                    ),
-                                };
+                                    ) => position.monitor_index,
+                                }
+                                // pyzed: the monitor of the window settings
+                                .or(settings.monitor);
+
+                                let requested_monitor = requested_index
+                                    .and_then(|index| {
+                                        event_loop
+                                            .available_monitors()
+                                            .nth(index.0)
+                                    });
+
+                                // pyzed: Wayland cannot take a monitor over
+                                let mut settings = settings;
+                                settings.exclusive_fullscreen &=
+                                    !conversion::is_wayland(event_loop);
 
                                 let monitor = requested_monitor
                                     .or(last_monitor)
@@ -676,6 +719,10 @@ async fn run_instance<P>(
     use winit::event_loop::ControlFlow;
 
     let mut window_manager = WindowManager::new();
+    window_manager.set_pacing(window::Pacing::new(
+        graphics_settings.rendering.max_fps,
+        graphics_settings.rendering.background_fps,
+    ));
     let mut cursor_registry = CursorRegistry::new();
     let mut is_window_opening = !is_daemon;
 
@@ -814,6 +861,8 @@ async fn run_instance<P>(
                         .expect("Wait for compositor")
                     {
                         Ok(new_compositor) => {
+                            let _ = quiet::GRAPHICS
+                                .set(new_compositor.information());
                             compositor = Some(new_compositor);
                         }
                         Err(error) => {
@@ -1012,6 +1061,12 @@ async fn run_instance<P>(
                             continue;
                         }
 
+                        // pyzed: covered whole by other windows: drawn when it shows again
+                        if window.occluded {
+                            window.deferred = true;
+                            continue;
+                        }
+
                         // pyzed: in the background on Android (no surface to draw on)
                         let Some(surface) = window.surface.as_mut() else {
                             continue;
@@ -1101,12 +1156,14 @@ async fn run_instance<P>(
                                     &mut messages,
                                 );
 
-                                user_interfaces =
-                                    ManuallyDrop::new(build_user_interfaces(
+                                let (interfaces, unchanged) =
+                                    rebuild_user_interfaces(
                                         &program,
                                         &mut window_manager,
                                         caches,
-                                    ));
+                                        &[id],
+                                    );
+                                user_interfaces = ManuallyDrop::new(interfaces);
 
                                 for action in actions {
                                     // Defer all window actions to avoid compositor
@@ -1138,7 +1195,9 @@ async fn run_instance<P>(
                                     window_manager.iter_mut()
                                 {
                                     // We are already redrawing this window
-                                    if window_id == id {
+                                    if window_id == id
+                                        || unchanged.contains(&window_id)
+                                    {
                                         continue;
                                     }
 
@@ -1220,6 +1279,8 @@ async fn run_instance<P>(
                         let Some(surface) = window.surface.as_mut() else {
                             continue;
                         };
+
+                        window.last_frame = Some(Instant::now());
 
                         match current_compositor.present(
                             &mut window.renderer,
@@ -1308,6 +1369,21 @@ async fn run_instance<P>(
                         match window_event {
                             winit::event::WindowEvent::Resized(_) => {
                                 window.raw.request_redraw();
+                            }
+                            // pyzed: frame rate limits and windows that do not draw
+                            winit::event::WindowEvent::Focused(focused) => {
+                                window.focused = focused;
+
+                                if focused {
+                                    window.resume();
+                                }
+                            }
+                            winit::event::WindowEvent::Occluded(occluded) => {
+                                window.occluded = occluded;
+
+                                if !occluded {
+                                    window.resume();
+                                }
                             }
                             // pyzed: a tap on a focused input shows the soft keyboard again
                             // (the user may have closed it while the input kept the focus).
@@ -1420,6 +1496,8 @@ async fn run_instance<P>(
                         }
 
                         let mut uis_stale = false;
+                        // pyzed: the windows that must be laid out again
+                        let mut outdated = Vec::new();
 
                         for (id, window) in window_manager.iter_mut() {
                             let interact_span = debug::interact(id);
@@ -1472,6 +1550,7 @@ async fn run_instance<P>(
                                 }
                                 user_interface::State::Outdated => {
                                     uis_stale = true;
+                                    outdated.push(id);
                                 }
                             }
 
@@ -1516,12 +1595,14 @@ async fn run_instance<P>(
                                 &mut messages,
                             );
 
-                            user_interfaces =
-                                ManuallyDrop::new(build_user_interfaces(
+                            let (interfaces, unchanged) =
+                                rebuild_user_interfaces(
                                     &program,
                                     &mut window_manager,
                                     cached_interfaces,
-                                ));
+                                    &outdated,
+                                );
+                            user_interfaces = ManuallyDrop::new(interfaces);
 
                             for action in actions {
                                 run_action(
@@ -1542,8 +1623,10 @@ async fn run_instance<P>(
                                 );
                             }
 
-                            for (_id, window) in window_manager.iter_mut() {
-                                window.raw.request_redraw();
+                            for (id, window) in window_manager.iter_mut() {
+                                if !unchanged.contains(&id) {
+                                    window.raw.request_redraw();
+                                }
                             }
                         }
 
@@ -1907,6 +1990,41 @@ fn run_action<'a, P, C>(
                     ));
                 }
             }
+            window::Action::SetFullscreen(id, fullscreen) => {
+                if let Some(window) = window_manager.get_mut(id) {
+                    let fullscreen = fullscreen.map(|fullscreen| {
+                        let monitor = fullscreen
+                            .monitor
+                            .and_then(|index| {
+                                window.raw.available_monitors().nth(index.0)
+                            })
+                            .or_else(|| window.raw.current_monitor());
+
+                        conversion::fullscreen_on(
+                            monitor,
+                            fullscreen.exclusive
+                                && !conversion::is_wayland(&window.raw),
+                        )
+                    });
+
+                    window.raw.set_visible(true);
+                    window.raw.set_fullscreen(fullscreen);
+                }
+            }
+            window::Action::SetCursorHidden(id, hidden) => {
+                if let Some(window) = window_manager.get_mut(id) {
+                    window.cursor_hidden = hidden;
+
+                    let interaction = if hidden {
+                        mouse::Interaction::Hidden
+                    } else {
+                        mouse::Interaction::None
+                    };
+                    window.raw.set_cursor_visible(!hidden);
+                    window.mouse_interaction = interaction;
+                    window.raw.request_redraw();
+                }
+            }
             window::Action::SetIcon(id, icon) => {
                 if let Some(window) = window_manager.get_mut(id) {
                     window.raw.set_window_icon(conversion::icon(icon));
@@ -2182,6 +2300,80 @@ fn run_action<'a, P, C>(
                 .expect("Send control action");
         }
     }
+}
+
+/// pyzed: [`build_user_interfaces`] after an update. The windows the app reports unchanged
+/// (see [`quiet::set_unchanged`]), unless `outdated`, keep their layout; they are returned so
+/// they are not redrawn.
+fn rebuild_user_interfaces<'a, P: Program, C>(
+    program: &'a program::Instance<P>,
+    window_manager: &mut WindowManager<P, C>,
+    mut cached_user_interfaces: FxHashMap<window::Id, user_interface::Cache>,
+    outdated: &[window::Id],
+) -> (
+    FxHashMap<window::Id, UserInterface<'a, P::Message, P::Theme, P::Renderer>>,
+    Vec<window::Id>,
+)
+where
+    C: Compositor<Renderer = P::Renderer>,
+    P::Theme: theme::Base,
+{
+    if quiet::UNCHANGED.get().is_none() {
+        return (
+            build_user_interfaces(
+                program,
+                window_manager,
+                cached_user_interfaces,
+            ),
+            Vec::new(),
+        );
+    }
+
+    let windows: Vec<_> = cached_user_interfaces.keys().copied().collect();
+    let mut unchanged = quiet::unchanged(&windows);
+    unchanged.retain(|id| !outdated.contains(id));
+
+    for (id, window) in window_manager.iter_mut() {
+        window.state.synchronize(program, id, &window.raw);
+    }
+
+    let interfaces = cached_user_interfaces
+        .drain()
+        .filter_map(|(id, cache)| {
+            let window = window_manager.get_mut(id)?;
+            let size = window.state.logical_size();
+
+            if !unchanged.contains(&id) {
+                return Some((
+                    id,
+                    build_user_interface(
+                        program,
+                        cache,
+                        &mut window.renderer,
+                        size,
+                        id,
+                    ),
+                ));
+            }
+
+            let view_span = debug::view(id);
+            let view = program.view(id);
+            view_span.finish();
+
+            let layout_span = debug::layout(id);
+            let interface = UserInterface::build_unchanged(
+                view,
+                size,
+                cache,
+                &mut window.renderer,
+            );
+            layout_span.finish();
+
+            Some((id, interface))
+        })
+        .collect();
+
+    (interfaces, unchanged)
 }
 
 /// Build the user interface for every window.

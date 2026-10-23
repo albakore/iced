@@ -43,7 +43,7 @@ mod platform;
 mod platform;
 
 use crate::Size;
-use crate::window::{Icon, Level, Position};
+use crate::window::{Icon, Level, MonitorIndex, Position};
 
 pub use platform::PlatformSpecific;
 
@@ -58,6 +58,14 @@ pub struct Settings {
 
     /// Whether the window should start fullscreen.
     pub fullscreen: bool,
+
+    /// pyzed: whether a window that starts fullscreen takes its monitor over with its own
+    /// video mode (see [`Fullscreen::exclusive`](crate::window::Fullscreen::exclusive)).
+    pub exclusive_fullscreen: bool,
+
+    /// pyzed: the monitor the window opens on, centered or fullscreen; `None` uses the one of
+    /// the last window or the primary one. A [`Position::Specific`] with its own monitor wins.
+    pub monitor: Option<MonitorIndex>,
 
     /// The initial position of the window.
     pub position: Position,
@@ -129,6 +137,8 @@ impl Default for Settings {
             size: Size::new(1024.0, 768.0),
             maximized: false,
             fullscreen: false,
+            exclusive_fullscreen: false,
+            monitor: None,
             position: Position::default(),
             min_size: None,
             max_size: None,

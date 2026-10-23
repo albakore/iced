@@ -53,11 +53,13 @@ pub fn window_attributes(
             height: settings.size.height * scale_factor,
         })
         .with_maximized(settings.maximized)
-        .with_fullscreen(
-            settings
-                .fullscreen
-                .then_some(winit::window::Fullscreen::Borderless(None)),
-        )
+        // pyzed: fullscreen on the chosen monitor, maybe with its own video mode
+        .with_fullscreen(settings.fullscreen.then(|| {
+            fullscreen_on(
+                primary_monitor.clone(),
+                settings.exclusive_fullscreen,
+            )
+        }))
         .with_resizable(settings.resizable)
         .with_enabled_buttons(buttons)
         .with_decorations(settings.decorations)
@@ -571,6 +573,49 @@ pub fn fullscreen(
     }
 }
 
+/// pyzed: covers `monitor` (the window's own when `None`) with a borderless window, or takes
+/// it over with its video mode of the highest refresh rate at its current resolution when
+/// `exclusive` (a borderless window where the monitor lists no video modes).
+pub fn fullscreen_on(
+    monitor: Option<winit::monitor::MonitorHandle>,
+    exclusive: bool,
+) -> winit::window::Fullscreen {
+    if exclusive && let Some(mode) = monitor.as_ref().and_then(video_mode) {
+        return winit::window::Fullscreen::Exclusive(mode);
+    }
+
+    winit::window::Fullscreen::Borderless(monitor)
+}
+
+/// pyzed: the video mode of `monitor` at its current resolution (or its largest) with the
+/// highest refresh rate and color depth.
+pub fn video_mode(
+    monitor: &winit::monitor::MonitorHandle,
+) -> Option<winit::monitor::VideoModeHandle> {
+    let current = monitor.size();
+
+    monitor.video_modes().max_by_key(|mode| {
+        let size = mode.size();
+
+        (
+            size == current,
+            u64::from(size.width) * u64::from(size.height),
+            mode.refresh_rate_millihertz(),
+            mode.bit_depth(),
+        )
+    })
+}
+
+/// pyzed: whether the windows are Wayland surfaces, which cannot take a monitor over.
+pub fn is_wayland(
+    display: &impl winit::raw_window_handle::HasDisplayHandle,
+) -> bool {
+    matches!(
+        display.display_handle().map(|handle| handle.as_raw()),
+        Ok(winit::raw_window_handle::RawDisplayHandle::Wayland(_))
+    )
+}
+
 /// Converts a [`window::Mode`] into a visibility flag.
 pub fn visible(mode: window::Mode) -> bool {
     match mode {
@@ -643,8 +688,10 @@ pub fn monitor(handle: winit::monitor::MonitorHandle) -> MonitorData {
     let scale_factor = handle.scale_factor();
     let name = handle.name();
     let refresh_rate_millihertz = handle.refresh_rate_millihertz();
+    let position = handle.position();
 
     MonitorData::new(physical_size, scale_factor, name, refresh_rate_millihertz)
+        .with_position(Point::new(position.x, position.y))
 }
 
 /// Converts a [`mouse::Interaction`] into a [`winit`] cursor icon.
