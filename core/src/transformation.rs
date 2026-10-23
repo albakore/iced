@@ -104,6 +104,10 @@ impl Mul<Transformation> for Rectangle {
     type Output = Self;
 
     fn mul(self, transformation: Transformation) -> Self {
+        if self == Rectangle::INFINITE {
+            return self;
+        }
+
         let position = self.position();
         let size = self.size();
 
