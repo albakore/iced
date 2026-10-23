@@ -443,20 +443,27 @@ where
                                 last_monitor,
                                 on_open,
                             } => {
-                                let requested_monitor = match settings.position
-                                {
+                                let requested_index = match settings.position {
                                     core::window::Position::Default => None,
                                     core::window::Position::Centered => None,
                                     core::window::Position::Specific(
                                         position,
-                                    ) => position.monitor_index.and_then(
-                                        |index| {
-                                            event_loop
-                                                .available_monitors()
-                                                .nth(index.0)
-                                        },
-                                    ),
-                                };
+                                    ) => position.monitor_index,
+                                }
+                                // pyzed: the monitor of the window settings
+                                .or(settings.monitor);
+
+                                let requested_monitor = requested_index
+                                    .and_then(|index| {
+                                        event_loop
+                                            .available_monitors()
+                                            .nth(index.0)
+                                    });
+
+                                // pyzed: Wayland cannot take a monitor over
+                                let mut settings = settings;
+                                settings.exclusive_fullscreen &=
+                                    !conversion::is_wayland(event_loop);
 
                                 let monitor = requested_monitor
                                     .or(last_monitor)
@@ -1981,6 +1988,41 @@ fn run_action<'a, P, C>(
                         window.raw.current_monitor(),
                         mode,
                     ));
+                }
+            }
+            window::Action::SetFullscreen(id, fullscreen) => {
+                if let Some(window) = window_manager.get_mut(id) {
+                    let fullscreen = fullscreen.map(|fullscreen| {
+                        let monitor = fullscreen
+                            .monitor
+                            .and_then(|index| {
+                                window.raw.available_monitors().nth(index.0)
+                            })
+                            .or_else(|| window.raw.current_monitor());
+
+                        conversion::fullscreen_on(
+                            monitor,
+                            fullscreen.exclusive
+                                && !conversion::is_wayland(&window.raw),
+                        )
+                    });
+
+                    window.raw.set_visible(true);
+                    window.raw.set_fullscreen(fullscreen);
+                }
+            }
+            window::Action::SetCursorHidden(id, hidden) => {
+                if let Some(window) = window_manager.get_mut(id) {
+                    window.cursor_hidden = hidden;
+
+                    let interaction = if hidden {
+                        mouse::Interaction::Hidden
+                    } else {
+                        mouse::Interaction::None
+                    };
+                    window.raw.set_cursor_visible(!hidden);
+                    window.mouse_interaction = interaction;
+                    window.raw.request_redraw();
                 }
             }
             window::Action::SetIcon(id, icon) => {

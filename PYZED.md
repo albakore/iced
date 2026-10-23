@@ -38,6 +38,15 @@ changes iced.
 - `iced_winit::quiet::set_unchanged` lets the app name the windows a message did not change: they
   keep their layout (`UserInterface::build_unchanged`, the cache now keeps it) and are not redrawn.
   `iced_winit::quiet::graphics` tells which GPU and backend draw the windows.
+- Fullscreen on a chosen monitor: `window::Settings::monitor` opens a window (centered or
+  fullscreen) on that monitor, `window::Settings::exclusive_fullscreen` takes the monitor over with
+  its own video mode (the highest refresh rate at its resolution), and
+  `window::set_fullscreen(id, Some(Fullscreen { monitor, exclusive }))` does both on an open window.
+  Wayland, which cannot take a monitor over, gets a borderless window instead.
+- `window::set_cursor_hidden` hides the pointer over a window whatever its widgets ask (kiosks and
+  touch panels).
+- `MonitorData::size` divides by the scale factor (it multiplied), and `MonitorData::position`
+  gives the monitor's place on the desktop.
 
 ## Community pull requests (81)
 

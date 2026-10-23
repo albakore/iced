@@ -94,6 +94,11 @@ impl<'a> MonitorRef<'a> {
         self.monitor().name()
     }
 
+    /// pyzed: returns the top left corner of the monitor on the desktop, in logical pixels.
+    pub fn position(&self) -> crate::Point {
+        self.monitor().position()
+    }
+
     /// Returns the refresh rate of the monitor in millihertz.
     pub fn refresh_rate_millihertz(&self) -> Option<u32> {
         self.monitor().refresh_rate_millihertz()
@@ -111,6 +116,7 @@ pub struct MonitorData {
     /// The size of the monitor in physical pixels.
     physical_size: crate::Size<u32>,
     /// The position of the monitor in physical pixels.
+    physical_position: crate::Point<i32>,
     /// The scale factor of the monitor.
     scale_factor: f64,
     name: Option<String>,
@@ -127,20 +133,45 @@ impl MonitorData {
     ) -> Self {
         Self {
             physical_size,
+            physical_position: crate::Point::new(0, 0),
             scale_factor,
             name,
             refresh_rate_millihertz,
         }
     }
 
+    /// pyzed: sets the top left corner of the monitor on the desktop, in physical pixels.
+    pub fn with_position(
+        mut self,
+        physical_position: crate::Point<i32>,
+    ) -> Self {
+        self.physical_position = physical_position;
+        self
+    }
+
     /// Returns the size of the monitor in logical pixels by applying the scale factor of the monitor to it's physical size.
     ///
     /// **WARNING**: this ignores the scale factor you might have set for a **window**.
     pub fn size(&self) -> crate::Size {
-        let width = self.physical_size.width as f32 * self.scale_factor as f32;
-        let height =
-            self.physical_size.height as f32 * self.scale_factor as f32;
+        // pyzed: logical pixels are physical pixels divided by the scale factor
+        let scale = self.scale_factor.max(f64::EPSILON) as f32;
+        let width = self.physical_size.width as f32 / scale;
+        let height = self.physical_size.height as f32 / scale;
         crate::Size::new(width, height)
+    }
+
+    /// Returns the size of the monitor in physical pixels.
+    pub fn physical_size(&self) -> crate::Size<u32> {
+        self.physical_size
+    }
+
+    /// pyzed: returns the top left corner of the monitor on the desktop, in logical pixels.
+    pub fn position(&self) -> crate::Point {
+        let scale = self.scale_factor.max(f64::EPSILON) as f32;
+        crate::Point::new(
+            self.physical_position.x as f32 / scale,
+            self.physical_position.y as f32 / scale,
+        )
     }
 
     /// Returns the scale factor of the monitor.
@@ -156,5 +187,25 @@ impl MonitorData {
     /// Returns the refresh rate of the monitor in millihertz.
     pub fn refresh_rate_millihertz(&self) -> Option<u32> {
         self.refresh_rate_millihertz
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logical_size_and_position_divide_by_the_scale() {
+        let monitor = MonitorData::new(
+            crate::Size::new(3840, 2160),
+            2.0,
+            Some("DP-1".to_owned()),
+            Some(60_000),
+        )
+        .with_position(crate::Point::new(3840, 0));
+
+        assert_eq!(monitor.size(), crate::Size::new(1920.0, 1080.0));
+        assert_eq!(monitor.position(), crate::Point::new(1920.0, 0.0));
+        assert_eq!(monitor.physical_size(), crate::Size::new(3840, 2160));
     }
 }

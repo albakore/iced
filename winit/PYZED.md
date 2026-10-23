@@ -18,3 +18,6 @@ The changes are marked `pyzed:`:
 - `src/lib.rs`: `quiet::set_unchanged` names the windows a message did not change after each
   update; they keep their layout and are not redrawn. `quiet::graphics` returns the adapter and
   backend of the compositor.
+- `src/conversion.rs`, `src/lib.rs`: fullscreen on the monitor of `window::Settings::monitor`
+  or of `window::Action::SetFullscreen`, exclusive with the monitor's best video mode except on
+  Wayland; `window::Action::SetCursorHidden` keeps the pointer hidden over a window.

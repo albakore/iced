@@ -6,6 +6,7 @@ pub mod settings;
 
 mod direction;
 mod event;
+mod fullscreen;
 mod id;
 mod level;
 mod mode;
@@ -16,6 +17,7 @@ mod user_attention;
 
 pub use direction::Direction;
 pub use event::Event;
+pub use fullscreen::Fullscreen;
 pub use icon::Icon;
 pub use id::Id;
 pub use level::Level;

@@ -126,6 +126,7 @@ where
                 occluded: false,
                 deferred: false,
                 last_frame: None,
+                cursor_hidden: false,
                 preedit: None,
                 ime_state: None,
                 #[cfg(target_os = "android")]
@@ -230,6 +231,8 @@ where
     pub deferred: bool,
     /// pyzed: when the last frame was presented.
     pub last_frame: Option<Instant>,
+    /// pyzed: the pointer is hidden over it whatever the widgets ask (kiosks, touch panels).
+    pub cursor_hidden: bool,
     preedit: Option<Preedit<P::Renderer>>,
     ime_state: Option<(Rectangle, input_method::Purpose)>,
     /// pyzed: the screen was touched since the last input method request.
@@ -357,6 +360,12 @@ where
         cursor_registry: &CursorRegistry,
         interaction: mouse::Interaction,
     ) {
+        let interaction = if self.cursor_hidden {
+            mouse::Interaction::Hidden
+        } else {
+            interaction
+        };
+
         if interaction != self.mouse_interaction {
             if let mouse::Interaction::Custom(id) = interaction {
                 if let Some(cursor) = cursor_registry.get(&id) {
