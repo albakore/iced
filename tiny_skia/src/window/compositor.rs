@@ -22,6 +22,8 @@ pub struct Surface {
     layer_stack: VecDeque<Vec<Layer>>,
     background_color: Color,
     max_age: u8,
+    // pyzed: effect layers draw outside what damage tracking sees, so they redraw everything.
+    had_effects: bool,
 }
 
 impl crate::graphics::Compositor for Compositor {
@@ -73,6 +75,7 @@ impl crate::graphics::Compositor for Compositor {
             layer_stack: VecDeque::new(),
             background_color: Color::BLACK,
             max_age: 0,
+            had_effects: false,
         };
 
         if width > 0 && height > 0 {
@@ -173,7 +176,11 @@ pub fn present(
         }
     };
 
+    let effects = renderer.has_effects() || surface.had_effects;
+    surface.had_effects = renderer.has_effects();
+
     let damage = last_layers
+        .filter(|_| !effects)
         .and_then(|last_layers| {
             (surface.background_color == background_color).then(|| {
                 damage::diff(

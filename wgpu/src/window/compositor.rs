@@ -29,6 +29,9 @@ pub enum Error {
     /// No adapter was found for the options requested.
     #[error("no adapter was found for the options requested: {0:?}")]
     NoAdapterFound(String),
+    /// pyzed: the adapter found runs on the CPU and a hardware one was asked for.
+    #[error("the adapter found runs on the CPU: {0}")]
+    SoftwareAdapter(String),
     /// No device request succeeded.
     #[error("no device request succeeded: {0:?}")]
     RequestDeviceFailed(Vec<(wgpu::Limits, wgpu::RequestDeviceError)>),
@@ -51,6 +54,17 @@ impl Compositor {
         settings: Settings,
         compatible_window: Option<W>,
         shell: Shell,
+    ) -> Result<Self, Error> {
+        Self::request_with(settings, compatible_window, shell, false).await
+    }
+
+    /// pyzed: [`Compositor::request`] that, with `hardware_only`, turns down an adapter that
+    /// runs on the CPU before it creates a device on it.
+    async fn request_with<W: compositor::Window>(
+        settings: Settings,
+        compatible_window: Option<W>,
+        shell: Shell,
+        hardware_only: bool,
     ) -> Result<Self, Error> {
         let instance = wgpu::util::new_instance_with_webgpu_detection(
             &wgpu::InstanceDescriptor {
@@ -94,6 +108,12 @@ impl Compositor {
             )?;
 
         log::info!("Selected: {:#?}", adapter.get_info());
+
+        if hardware_only
+            && adapter.get_info().device_type == wgpu::DeviceType::Cpu
+        {
+            return Err(Error::SoftwareAdapter(adapter.get_info().name));
+        }
 
         let (format, alpha_mode) = compatible_surface
             .as_ref()
@@ -264,15 +284,16 @@ impl graphics::Compositor for Compositor {
     async fn with_backend(
         settings: graphics::Settings,
         _display: impl compositor::Display,
-        compatible_window: impl compositor::Window,
+        compatible_window: impl compositor::Window + Clone,
         shell: Shell,
         backend: Option<&str>,
     ) -> Result<Self, graphics::Error> {
         match backend {
             None | Some("wgpu") => {
                 let mut settings = Settings::from(settings);
+                let chosen = wgpu::Backends::from_env();
 
-                if let Some(backends) = wgpu::Backends::from_env() {
+                if let Some(backends) = chosen {
                     settings.backends = backends;
                 }
 
@@ -280,7 +301,54 @@ impl graphics::Compositor for Compositor {
                     settings.present_mode = present_mode;
                 }
 
-                Ok(new(settings, compatible_window, shell).await?)
+                // pyzed: try the native APIs (Vulkan, Metal, DX12) first. Starting the GL
+                // backend too costs time and memory at every launch (and prints driver
+                // warnings on Mesa), so it is only started when none of them has an adapter.
+                // pyzed: an adapter that runs on the CPU (Mesa's llvmpipe and lavapipe,
+                // Windows' WARP, SwiftShader) draws slower than tiny-skia and takes about
+                // 100 MB more, so unless a backend was named (`ICED_BACKEND=wgpu` or
+                // `WGPU_BACKEND`, e.g. for `pz.shader`) the fallback renderer takes over.
+                let hardware_only = backend.is_none() && chosen.is_none();
+                if hardware_only && !has_gpu_device() {
+                    // Without a GPU device, starting Vulkan or GL would only find the CPU,
+                    // and leave their drivers loaded (about 50 MB) for nothing.
+                    return Err(Error::SoftwareAdapter(
+                        "no GPU device".to_owned(),
+                    )
+                    .into());
+                }
+
+                if chosen.is_none()
+                    && settings.backends == wgpu::Backends::all()
+                {
+                    let native = Settings {
+                        backends: wgpu::Backends::PRIMARY,
+                        ..settings
+                    };
+                    match Compositor::request_with(
+                        native,
+                        Some(compatible_window.clone()),
+                        shell.clone(),
+                        hardware_only,
+                    )
+                    .await
+                    {
+                        Ok(compositor) => return Ok(compositor),
+                        // A software Vulkan found first: GL would find the same CPU.
+                        Err(error @ Error::SoftwareAdapter(_)) => {
+                            return Err(error.into());
+                        }
+                        Err(_) => {}
+                    }
+                }
+
+                Ok(Compositor::request_with(
+                    settings,
+                    Some(compatible_window),
+                    shell,
+                    hardware_only,
+                )
+                .await?)
             }
             Some(backend) => Err(graphics::Error::GraphicsAdapterNotFound {
                 backend: "wgpu",
@@ -371,5 +439,25 @@ impl graphics::Compositor for Compositor {
         background_color: Color,
     ) -> Vec<u8> {
         renderer.screenshot(viewport, background_color)
+    }
+}
+
+/// pyzed: whether the system has a GPU a hardware adapter could run on. On Linux that is a
+/// DRM render node, NVIDIA's device or WSL's `/dev/dxg`; elsewhere it is left to the adapter.
+fn has_gpu_device() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let render_node = std::fs::read_dir("/dev/dri").is_ok_and(|entries| {
+            entries.flatten().any(|entry| {
+                entry.file_name().to_string_lossy().starts_with("renderD")
+            })
+        });
+        render_node
+            || std::path::Path::new("/dev/nvidia0").exists()
+            || std::path::Path::new("/dev/dxg").exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
     }
 }
