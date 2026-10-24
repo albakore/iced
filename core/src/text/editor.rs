@@ -64,6 +64,21 @@ pub trait Editor: Sized + Default {
         highlighter: &mut H,
         format_highlight: impl Fn(&H::Highlight) -> highlighter::Format<Self::Font>,
     );
+
+    /// Runs a text [`Highlighter`] in the [`Editor`] only down to `bottom`, the lowest
+    /// visible point measured from the top of the text. An editor as tall as its contents
+    /// inside a scrollable then highlights what is on screen, instead of every line below
+    /// the last edit.
+    fn highlight_until<H: Highlighter>(
+        &mut self,
+        font: Self::Font,
+        highlighter: &mut H,
+        format_highlight: impl Fn(&H::Highlight) -> highlighter::Format<Self::Font>,
+        bottom: f32,
+    ) {
+        let _ = bottom;
+        self.highlight(font, highlighter, format_highlight);
+    }
 }
 
 /// An interaction with an [`Editor`].

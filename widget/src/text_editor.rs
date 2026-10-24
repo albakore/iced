@@ -967,7 +967,7 @@ where
         _defaults: &renderer::Style,
         layout: Layout<'_>,
         _cursor: mouse::Cursor,
-        _viewport: &Rectangle,
+        viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
 
@@ -989,10 +989,16 @@ where
                 state.last_theme.borrow_mut().replace(theme_name.to_owned());
         }
 
-        internal.editor.highlight(
+        // Only what is on screen (and a screen more): an editor taller than its viewport
+        // (inside a scrollable) highlights the rest as it scrolls into view. (Pyzed)
+        let bottom =
+            viewport.y + viewport.height * 2.0 - (bounds.y + self.padding.top);
+
+        internal.editor.highlight_until(
             font,
             state.highlighter.borrow_mut().deref_mut(),
             |highlight| (self.highlighter_format)(highlight, theme),
+            bottom,
         );
 
         let style = theme

@@ -650,11 +650,27 @@ impl editor::Editor for Editor {
         highlighter: &mut H,
         format_highlight: impl Fn(&H::Highlight) -> highlighter::Format<Self::Font>,
     ) {
+        self.highlight_until(
+            font,
+            highlighter,
+            format_highlight,
+            f32::INFINITY,
+        );
+    }
+
+    fn highlight_until<H: Highlighter>(
+        &mut self,
+        font: Self::Font,
+        highlighter: &mut H,
+        format_highlight: impl Fn(&H::Highlight) -> highlighter::Format<Self::Font>,
+        bottom: f32,
+    ) {
         let internal = self.internal();
         let buffer = buffer_from_editor(&internal.editor);
 
         let scroll = buffer.scroll();
-        let mut window = (internal.bounds.height / buffer.metrics().line_height)
+        let mut window = (internal.bounds.height.min(bottom.max(0.0))
+            / buffer.metrics().line_height)
             .ceil() as i32;
 
         let last_visible_line = buffer.lines[scroll.line..]
