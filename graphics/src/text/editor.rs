@@ -25,6 +25,8 @@ struct Internal {
     topmost_line_changed: Option<usize>,
     version: text::Version,
     letter_spacing: Em,
+    /// pyzed: the editor changed since `update` last ran (it has to run again).
+    changed: bool,
 }
 
 impl Editor {
@@ -75,6 +77,8 @@ impl Editor {
             .write()
             .expect("Write to cursor cache")
             .take();
+
+        internal.changed = true;
 
         let result = f(&mut internal);
 
@@ -558,7 +562,37 @@ impl editor::Editor for Editor {
         new_wrapping: Wrapping,
         new_highlighter: &mut impl Highlighter,
     ) {
+        // pyzed: a layout that changes nothing keeps the editor as it is. Every change makes a
+        // new one, so the renderer repainted the whole editor after any layout (a tooltip
+        // showing up elsewhere, a hover).
+        {
+            let internal = self.internal();
+            let buffer = buffer_from_editor(&internal.editor);
+            let metrics = buffer.metrics();
+
+            if !internal.changed
+                && internal.topmost_line_changed.is_none()
+                && new_bounds == internal.bounds
+                && new_font == internal.font
+                && new_letter_spacing == internal.letter_spacing
+                && new_size.0 == metrics.font_size
+                && new_line_height.to_absolute(new_size).0
+                    == metrics.line_height
+                && text::to_wrap(new_wrapping) == buffer.wrap()
+                && buffer.tab_width() == text::tab_width()
+                && text::font_system()
+                    .read()
+                    .expect("Read font system")
+                    .version()
+                    == internal.version
+            {
+                return;
+            }
+        }
+
         self.with_internal_mut(|internal| {
+            internal.changed = false;
+
             let mut font_system =
                 text::font_system().write().expect("Write font system");
 
@@ -778,6 +812,7 @@ impl Default for Internal {
             topmost_line_changed: None,
             version: text::Version::default(),
             letter_spacing: Em::ZERO,
+            changed: true,
         }
     }
 }
