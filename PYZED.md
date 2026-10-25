@@ -47,6 +47,12 @@ changes iced.
   touch panels).
 - `MonitorData::size` divides by the scale factor (it multiplied), and `MonitorData::position`
   gives the monitor's place on the desktop.
+- tiny-skia draws only what is visible and repaints only what changed: text and quads are cut to
+  the clip bounds, effect groups are composited only where they are, items that come or go (a
+  hover background, a tooltip) damage only themselves, unchanged canvas shapes and text editors
+  are not repainted, and box shadows are computed only where the frame repaints.
+- Without a frame rate limit, animation frames wait for the refresh rate of the window's monitor
+  (the software renderer, which does not wait for vsync, drew as fast as it could).
 
 ## Community pull requests (81)
 
