@@ -64,7 +64,7 @@ impl Effect {
 }
 
 /// A recorded group: the layers `start..end` with their effect.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Group {
     pub start: usize,
     pub end: usize,

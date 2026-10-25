@@ -1,6 +1,8 @@
 use crate::core::alignment;
 use crate::core::text::{Alignment, Shaping};
-use crate::core::{Color, Em, Font, Pixels, Point, Rectangle, Transformation};
+use crate::core::{
+    Color, Em, Font, Pixels, Point, Rectangle, Size, Transformation,
+};
 use crate::graphics::text::cache::{self, Cache};
 use crate::graphics::text::editor;
 use crate::graphics::text::font_system;
@@ -43,6 +45,7 @@ impl Pipeline {
         color: Color,
         pixels: &mut tiny_skia::PixmapMut<'_>,
         clip_mask: Option<&tiny_skia::Mask>,
+        clip_bounds: Rectangle,
         transformation: Transformation,
     ) {
         let Some(paragraph) = paragraph.upgrade() else {
@@ -59,6 +62,7 @@ impl Pipeline {
             color,
             pixels,
             clip_mask,
+            clip_bounds,
             transformation,
         );
     }
@@ -70,6 +74,7 @@ impl Pipeline {
         color: Color,
         pixels: &mut tiny_skia::PixmapMut<'_>,
         clip_mask: Option<&tiny_skia::Mask>,
+        clip_bounds: Rectangle,
         transformation: Transformation,
     ) {
         let Some(editor) = editor.upgrade() else {
@@ -86,6 +91,7 @@ impl Pipeline {
             color,
             pixels,
             clip_mask,
+            clip_bounds,
             transformation,
         );
     }
@@ -104,6 +110,7 @@ impl Pipeline {
         letter_spacing: Em,
         pixels: &mut tiny_skia::PixmapMut<'_>,
         clip_mask: Option<&tiny_skia::Mask>,
+        clip_bounds: Rectangle,
         transformation: Transformation,
     ) {
         let line_height = f32::from(line_height);
@@ -151,6 +158,7 @@ impl Pipeline {
             color,
             pixels,
             clip_mask,
+            clip_bounds,
             transformation,
         );
     }
@@ -162,6 +170,7 @@ impl Pipeline {
         color: Color,
         pixels: &mut tiny_skia::PixmapMut<'_>,
         clip_mask: Option<&tiny_skia::Mask>,
+        clip_bounds: Rectangle,
         transformation: Transformation,
     ) {
         let mut font_system = font_system().write().expect("Write font system");
@@ -174,6 +183,7 @@ impl Pipeline {
             color,
             pixels,
             clip_mask,
+            clip_bounds,
             transformation,
         );
     }
@@ -192,18 +202,51 @@ fn draw(
     color: Color,
     pixels: &mut tiny_skia::PixmapMut<'_>,
     clip_mask: Option<&tiny_skia::Mask>,
+    clip_bounds: Rectangle,
     transformation: Transformation,
 ) {
     let position = position * transformation;
+    let scale = transformation.scale_factor();
+
+    // pyzed: only the lines and glyphs inside the clip bounds (and the pixel map) are drawn; a
+    // text editor inside a scrollable holds the whole document.
+    let visible = crate::engine::snap_to_pixels(clip_bounds)
+        .intersection(&Rectangle::new(
+            Point::ORIGIN,
+            Size::new(pixels.width() as f32, pixels.height() as f32),
+        ))
+        .unwrap_or(Rectangle::new(Point::ORIGIN, Size::ZERO));
+    let (top, bottom) = (visible.y, visible.y + visible.height);
+    let (left, right) = (visible.x, visible.x + visible.width);
 
     let mut swash = cosmic_text::SwashCache::new();
 
     for run in buffer.layout_runs() {
+        let run_top = position.y + run.line_top * scale;
+
+        if run_top >= bottom {
+            break;
+        }
+
+        if run_top + run.line_height * scale <= top {
+            continue;
+        }
+
         for glyph in run.glyphs {
             let physical_glyph = glyph.physical(
                 (position.x, position.y),
                 transformation.scale_factor(),
             );
+
+            // Glyphs are a few pixels wider than their advance at most (italics, ligatures).
+            let glyph_x = physical_glyph.x as f32;
+            let slack = run.line_height * scale;
+
+            if glyph_x - slack >= right
+                || glyph_x + glyph.w * scale + slack <= left
+            {
+                continue;
+            }
 
             if let Some((buffer, placement)) = glyph_cache.allocate(
                 physical_glyph.cache_key,
@@ -224,18 +267,27 @@ fn draw(
                         .map(|c| c.a() as f32 / 255.0)
                         .unwrap_or(1.0);
 
+                let x = physical_glyph.x + placement.left;
+                let y = physical_glyph.y - placement.top
+                    + (run.line_y * transformation.scale_factor()).round()
+                        as i32;
+
+                // The clip mask is the visible rectangle: a glyph inside it needs none.
+                let inside = x as f32 >= left
+                    && y as f32 >= top
+                    && (x + placement.width as i32) as f32 <= right
+                    && (y + placement.height as i32) as f32 <= bottom;
+
                 pixels.draw_pixmap(
-                    physical_glyph.x + placement.left,
-                    physical_glyph.y - placement.top
-                        + (run.line_y * transformation.scale_factor()).round()
-                            as i32,
+                    x,
+                    y,
                     pixmap,
                     &tiny_skia::PixmapPaint {
                         opacity,
                         ..tiny_skia::PixmapPaint::default()
                     },
                     tiny_skia::Transform::identity(),
-                    clip_mask,
+                    if inside { None } else { clip_mask },
                 );
             }
         }
