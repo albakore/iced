@@ -3,7 +3,7 @@ use crate::graphics::compositor::{self, Information};
 use crate::graphics::damage;
 use crate::graphics::error::{self, Error};
 use crate::graphics::{self, Shell, Viewport};
-use crate::{Layer, Renderer, Settings};
+use crate::{Layer, Renderer, Settings, effect};
 
 use std::collections::VecDeque;
 use std::num::NonZeroU32;
@@ -19,11 +19,10 @@ pub struct Surface {
         Box<dyn compositor::Window>,
     >,
     clip_mask: tiny_skia::Mask,
-    layer_stack: VecDeque<Vec<Layer>>,
+    // pyzed: with the effect groups of each frame and where they draw.
+    layer_stack: VecDeque<(Vec<Layer>, Vec<(effect::Group, Rectangle)>)>,
     background_color: Color,
     max_age: u8,
-    // pyzed: effect layers draw outside what damage tracking sees, so they redraw everything.
-    had_effects: bool,
 }
 
 impl crate::graphics::Compositor for Compositor {
@@ -71,11 +70,13 @@ impl crate::graphics::Compositor for Compositor {
 
         let mut surface = Surface {
             window,
-            clip_mask: tiny_skia::Mask::new(1, 1).expect("Create clip mask"),
+            clip_mask: {
+                crate::engine::forget_clip_mask();
+                tiny_skia::Mask::new(1, 1).expect("Create clip mask")
+            },
             layer_stack: VecDeque::new(),
             background_color: Color::BLACK,
             max_age: 0,
-            had_effects: false,
         };
 
         if width > 0 && height > 0 {
@@ -101,6 +102,7 @@ impl crate::graphics::Compositor for Compositor {
 
         surface.clip_mask =
             tiny_skia::Mask::new(width, height).expect("Create clip mask");
+        crate::engine::forget_clip_mask();
         surface.layer_stack.clear();
     }
 
@@ -176,19 +178,19 @@ pub fn present(
         }
     };
 
-    let effects = renderer.has_effects() || surface.had_effects;
-    surface.had_effects = renderer.has_effects();
+    let regions = renderer.effect_regions();
 
     let damage = last_layers
-        .filter(|_| !effects)
-        .and_then(|last_layers| {
+        .and_then(|(last_layers, last_regions)| {
             (surface.background_color == background_color).then(|| {
-                damage::diff(
+                let mut damage = damage::diff(
                     last_layers,
                     renderer.layers(),
                     |layer| vec![layer.bounds],
                     Layer::damage,
-                )
+                );
+                effect_damage(&mut damage, last_regions, &regions);
+                damage
             })
         })
         .unwrap_or_else(|| vec![Rectangle::with_size(viewport.logical_size())]);
@@ -198,7 +200,9 @@ pub fn present(
             surface.layer_stack.push_front(last_layers.clone());
         }
     } else {
-        surface.layer_stack.push_front(renderer.layers().to_vec());
+        surface
+            .layer_stack
+            .push_front((renderer.layers().to_vec(), regions));
         surface.background_color = background_color;
 
         let damage = damage::group(
@@ -226,6 +230,39 @@ pub fn present(
     buffer.present().map_err(|_| compositor::SurfaceError::Lost)
 }
 
+/// pyzed: adds to `damage` where effect groups changed (their layers diff the same while their
+/// opacity or rotation moves), and the whole of a group that reads around what it draws.
+fn effect_damage(
+    damage: &mut Vec<Rectangle>,
+    old: &[(effect::Group, Rectangle)],
+    new: &[(effect::Group, Rectangle)],
+) {
+    for (group, region) in new {
+        if !old.contains(&(group.clone(), *region)) {
+            damage.push(*region);
+        }
+    }
+    for (group, region) in old {
+        if !new.contains(&(group.clone(), *region)) {
+            damage.push(*region);
+        }
+    }
+    loop {
+        let mut grew = false;
+        for (_, region) in new.iter().filter(|(g, _)| crate::reads_around(g)) {
+            if damage.iter().any(|d| d.intersects(region))
+                && !damage.iter().any(|d| region.is_within(d))
+            {
+                damage.push(*region);
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+}
+
 pub fn screenshot(
     renderer: &mut Renderer,
     viewport: &Viewport,
@@ -238,6 +275,7 @@ pub fn screenshot(
 
     let mut clip_mask = tiny_skia::Mask::new(size.width, size.height)
         .expect("Create clip mask");
+    crate::engine::forget_clip_mask();
 
     renderer.draw(
         &mut tiny_skia::PixmapMut::from_bytes(

@@ -53,9 +53,12 @@ impl Engine {
             return;
         }
 
+        let within = physical_bounds.is_within(&clip_bounds);
+        if !within || !visible_bounds.is_within(&clip_bounds) {
+            adjust_clip_mask(clip_mask, clip_bounds);
+        }
         let mask: &tiny_skia::Mask = clip_mask;
-        let clip_mask =
-            (!physical_bounds.is_within(&clip_bounds)).then_some(mask);
+        let clip_mask = (!within).then_some(mask);
 
         let transform = into_transform(transformation);
 
@@ -219,62 +222,40 @@ impl Engine {
             }
         }
 
-        pixels.fill_path(
-            &path,
-            &tiny_skia::Paint {
-                shader: match background {
-                    Background::Color(color) => {
-                        tiny_skia::Shader::SolidColor(into_color(*color))
-                    }
-                    Background::Gradient(Gradient::Linear(linear)) => {
-                        let (start, end) =
-                            linear.angle.to_distance(&quad.bounds);
+        // pyzed: a solid quad with square corners is a rectangle: tiny-skia fills its inside
+        // as whole spans and only anti-aliases its edges, much faster than filling a path (the
+        // backgrounds of a whole panel are redrawn on every step of a scroll). The clip mask is
+        // a rectangle too (see `adjust_clip_mask`), so the quad is cut to it instead.
+        let square = fill_border_radius.iter().all(|radius| *radius <= 0.0);
 
-                        let stops: Vec<tiny_skia::GradientStop> = linear
-                            .stops
-                            .into_iter()
-                            .flatten()
-                            .map(|stop| {
-                                tiny_skia::GradientStop::new(
-                                    stop.offset,
-                                    tiny_skia::Color::from_rgba(
-                                        stop.color.b,
-                                        stop.color.g,
-                                        stop.color.r,
-                                        stop.color.a,
-                                    )
-                                    .expect("Create color"),
-                                )
-                            })
-                            .collect();
-
-                        tiny_skia::LinearGradient::new(
-                            tiny_skia::Point {
-                                x: start.x,
-                                y: start.y,
-                            },
-                            tiny_skia::Point { x: end.x, y: end.y },
-                            if stops.is_empty() {
-                                vec![tiny_skia::GradientStop::new(
-                                    0.0,
-                                    tiny_skia::Color::BLACK,
-                                )]
-                            } else {
-                                stops
-                            },
-                            tiny_skia::SpreadMode::Pad,
-                            tiny_skia::Transform::identity(),
-                        )
-                        .expect("Create linear gradient")
-                    }
-                },
-                anti_alias: true,
-                ..tiny_skia::Paint::default()
-            },
-            tiny_skia::FillRule::EvenOdd,
-            transform,
-            clip_mask,
-        );
+        if let (true, Background::Color(color)) = (square, background) {
+            if let Some(visible) =
+                physical_bounds.intersection(&snap_to_pixels(clip_bounds))
+                && let Some(rect) = tiny_skia::Rect::from_xywh(
+                    visible.x,
+                    visible.y,
+                    visible.width,
+                    visible.height,
+                )
+            {
+                pixels.fill_rect(
+                    rect,
+                    &tiny_skia::Paint {
+                        shader: tiny_skia::Shader::SolidColor(into_color(
+                            *color,
+                        )),
+                        anti_alias: true,
+                        ..tiny_skia::Paint::default()
+                    },
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
+            }
+        } else {
+            self.fill_quad_path(
+                quad, background, &path, transform, pixels, clip_mask,
+            );
+        }
 
         if uniform_border && border_width > 0.0 {
             // Border path is offset by half the border width
@@ -406,6 +387,74 @@ impl Engine {
         }
     }
 
+    /// The fill of a quad as a path: rounded corners or a gradient.
+    fn fill_quad_path(
+        &mut self,
+        quad: &Quad,
+        background: &Background,
+        path: &tiny_skia::Path,
+        transform: tiny_skia::Transform,
+        pixels: &mut tiny_skia::PixmapMut<'_>,
+        clip_mask: Option<&tiny_skia::Mask>,
+    ) {
+        pixels.fill_path(
+            path,
+            &tiny_skia::Paint {
+                shader: match background {
+                    Background::Color(color) => {
+                        tiny_skia::Shader::SolidColor(into_color(*color))
+                    }
+                    Background::Gradient(Gradient::Linear(linear)) => {
+                        let (start, end) =
+                            linear.angle.to_distance(&quad.bounds);
+
+                        let stops: Vec<tiny_skia::GradientStop> = linear
+                            .stops
+                            .into_iter()
+                            .flatten()
+                            .map(|stop| {
+                                tiny_skia::GradientStop::new(
+                                    stop.offset,
+                                    tiny_skia::Color::from_rgba(
+                                        stop.color.b,
+                                        stop.color.g,
+                                        stop.color.r,
+                                        stop.color.a,
+                                    )
+                                    .expect("Create color"),
+                                )
+                            })
+                            .collect();
+
+                        tiny_skia::LinearGradient::new(
+                            tiny_skia::Point {
+                                x: start.x,
+                                y: start.y,
+                            },
+                            tiny_skia::Point { x: end.x, y: end.y },
+                            if stops.is_empty() {
+                                vec![tiny_skia::GradientStop::new(
+                                    0.0,
+                                    tiny_skia::Color::BLACK,
+                                )]
+                            } else {
+                                stops
+                            },
+                            tiny_skia::SpreadMode::Pad,
+                            tiny_skia::Transform::identity(),
+                        )
+                        .expect("Create linear gradient")
+                    }
+                },
+                anti_alias: true,
+                ..tiny_skia::Paint::default()
+            },
+            tiny_skia::FillRule::EvenOdd,
+            transform,
+            clip_mask,
+        );
+    }
+
     pub fn draw_text(
         &mut self,
         text: &Text,
@@ -451,6 +500,7 @@ impl Engine {
                     *color,
                     pixels,
                     clip_mask,
+                    clip_bounds,
                     transformation,
                 );
             }
@@ -489,6 +539,7 @@ impl Engine {
                     *color,
                     pixels,
                     clip_mask,
+                    clip_bounds,
                     transformation,
                 );
             }
@@ -532,6 +583,7 @@ impl Engine {
                     *letter_spacing,
                     pixels,
                     clip_mask,
+                    clip_bounds,
                     transformation,
                 );
             }
@@ -581,6 +633,7 @@ impl Engine {
                     raw.color,
                     pixels,
                     clip_mask,
+                    clip_bounds,
                     transformation,
                 );
             }
@@ -612,8 +665,7 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&clip_bounds))
-                    .then_some(clip_mask as &_);
+                let clip_mask = masked(clip_mask, physical_bounds, clip_bounds);
 
                 pixels.fill_path(
                     path,
@@ -643,8 +695,7 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&clip_bounds))
-                    .then_some(clip_mask as &_);
+                let clip_mask = masked(clip_mask, physical_bounds, clip_bounds);
 
                 pixels.stroke_path(
                     path,
@@ -674,8 +725,8 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&_clip_bounds))
-                    .then_some(_clip_mask as &_);
+                let clip_mask =
+                    masked(_clip_mask, physical_bounds, _clip_bounds);
 
                 let center = physical_bounds.center();
                 let radians = f32::from(image.rotation);
@@ -704,8 +755,8 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&_clip_bounds))
-                    .then_some(_clip_mask as &_);
+                let clip_mask =
+                    masked(_clip_mask, physical_bounds, _clip_bounds);
 
                 let center = physical_bounds.center();
                 let radians = f32::from(svg.rotation);
@@ -1249,30 +1300,101 @@ fn rounded_box_sdf(
     (x.powf(2.0) + y.powf(2.0)).sqrt() - radius
 }
 
+/// pyzed: the clip mask of each thread is a single rectangle, so it is redrawn by clearing the
+/// last rectangle and filling the new one (nothing at all when it is the same) instead of
+/// clearing the whole mask and filling a path: text and quads in scrollables ask for it a
+/// thousand times a frame.
 pub fn adjust_clip_mask(clip_mask: &mut tiny_skia::Mask, bounds: Rectangle) {
-    clip_mask.clear();
+    let (width, height) = (clip_mask.width(), clip_mask.height());
+    let new = mask_rect(bounds, width, height);
+    let key = (clip_mask.data().as_ptr() as usize, width, height);
 
-    let path = {
-        let mut builder = tiny_skia::PathBuilder::new();
-        builder.push_rect(
-            tiny_skia::Rect::from_xywh(
-                bounds.x,
-                bounds.y,
-                bounds.width,
-                bounds.height,
-            )
-            .unwrap(),
-        );
+    let last = CLIP_MASK.with(|last| last.replace(Some((key, new))));
 
-        builder.finish().unwrap()
-    };
+    match last {
+        Some((last_key, old)) if last_key == key => {
+            if old == new {
+                return;
+            }
 
-    clip_mask.fill_path(
-        &path,
-        tiny_skia::FillRule::EvenOdd,
-        false,
-        tiny_skia::Transform::default(),
+            fill_mask_rect(clip_mask, old, 0);
+        }
+        _ => clip_mask.clear(),
+    }
+
+    fill_mask_rect(clip_mask, new, 255);
+}
+
+/// pyzed: the clip mask for something drawn over `physical_bounds`, `None` when it is all
+/// inside `clip_bounds`; the mask is only redrawn when something needs it.
+fn masked(
+    clip_mask: &mut tiny_skia::Mask,
+    physical_bounds: Rectangle,
+    clip_bounds: Rectangle,
+) -> Option<&tiny_skia::Mask> {
+    if physical_bounds.is_within(&clip_bounds) {
+        return None;
+    }
+
+    adjust_clip_mask(clip_mask, clip_bounds);
+    Some(clip_mask)
+}
+
+/// pyzed: forgets the rectangle of the clip mask (a new mask may take the place of the old one).
+pub fn forget_clip_mask() {
+    CLIP_MASK.with(|last| last.set(None));
+}
+
+type MaskRect = (u32, u32, u32, u32);
+
+/// pyzed: `bounds` with its edges on the pixels the clip mask covers for it.
+pub fn snap_to_pixels(bounds: Rectangle) -> Rectangle {
+    let (x0, y0) = (bounds.x.round(), bounds.y.round());
+    let (x1, y1) = (
+        (bounds.x + bounds.width).round(),
+        (bounds.y + bounds.height).round(),
     );
+
+    Rectangle {
+        x: x0,
+        y: y0,
+        width: (x1 - x0).max(0.0),
+        height: (y1 - y0).max(0.0),
+    }
+}
+
+thread_local! {
+    static CLIP_MASK: std::cell::Cell<Option<((usize, u32, u32), MaskRect)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// The pixels a non anti-aliased fill of `bounds` covers (their centers are inside).
+fn mask_rect(bounds: Rectangle, width: u32, height: u32) -> MaskRect {
+    let clamp = |v: f32, max: u32| (v.round().max(0.0) as u32).min(max);
+
+    (
+        clamp(bounds.x, width),
+        clamp(bounds.y, height),
+        clamp(bounds.x + bounds.width, width),
+        clamp(bounds.y + bounds.height, height),
+    )
+}
+
+fn fill_mask_rect(
+    clip_mask: &mut tiny_skia::Mask,
+    (x0, y0, x1, y1): MaskRect,
+    value: u8,
+) {
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+
+    let stride = clip_mask.width() as usize;
+    let data = clip_mask.data_mut();
+
+    for y in y0 as usize..y1 as usize {
+        data[y * stride + x0 as usize..y * stride + x1 as usize].fill(value);
+    }
 }
 
 #[cfg(test)]

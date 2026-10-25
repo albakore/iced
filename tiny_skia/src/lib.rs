@@ -87,6 +87,10 @@ impl Renderer {
         // pyzed: effect groups, outermost first.
         let mut groups = self.effects.clone();
         groups.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+        // pyzed: what each group draws, physical (a rotated key in a timeline is a few pixels
+        // of a group as large as the panel).
+        let extents =
+            group_extents(&groups, self.layers.as_slice(), scale_factor);
 
         for &damage_bounds in damage {
             let damage_bounds = damage_bounds * scale_factor;
@@ -121,7 +125,11 @@ impl Renderer {
                 Vec::new();
 
             for (index, layer) in self.layers.iter().enumerate() {
-                for group in groups.iter().filter(|g| g.start == index) {
+                for (group, extent) in groups
+                    .iter()
+                    .zip(&extents)
+                    .filter(|(g, _)| g.start == index)
+                {
                     let backdrop =
                         (group.effect.backdrop_blur > 0.0).then(|| {
                             let mut source = match stack.last() {
@@ -141,8 +149,14 @@ impl Renderer {
                             source
                         });
                     stack.push((
-                        tiny_skia::Pixmap::new(width, height)
-                            .expect("Create effect pixmap"),
+                        effect_pixmap(
+                            width,
+                            height,
+                            group,
+                            *extent,
+                            damage_bounds,
+                            scale_factor,
+                        ),
                         backdrop,
                     ));
                 }
@@ -167,7 +181,11 @@ impl Renderer {
                 }
 
                 // pyzed: composite the groups that end after this layer, innermost first.
-                for group in groups.iter().rev().filter(|g| g.end == index + 1)
+                for (group, extent) in groups
+                    .iter()
+                    .zip(&extents)
+                    .rev()
+                    .filter(|(g, _)| g.end == index + 1)
                 {
                     let Some((mut content, backdrop)) = stack.pop() else {
                         continue;
@@ -179,6 +197,7 @@ impl Renderer {
                             &mut content,
                             backdrop.as_ref(),
                             group,
+                            *extent,
                             damage_bounds,
                             scale_factor,
                         ),
@@ -188,10 +207,16 @@ impl Renderer {
                             &mut content,
                             backdrop.as_ref(),
                             group,
+                            *extent,
                             damage_bounds,
                             scale_factor,
                         ),
                     }
+                    EFFECT_PIXMAPS.with_borrow_mut(|pool| {
+                        if pool.len() < 2 {
+                            pool.push(content);
+                        }
+                    });
                 }
             }
         }
@@ -199,9 +224,34 @@ impl Renderer {
         self.engine.trim();
     }
 
-    /// pyzed: whether the last frame drew effect layers (they need a full redraw).
-    pub fn has_effects(&self) -> bool {
-        !self.effects.is_empty()
+    /// pyzed: each effect group of the frame with the part of the window it can change,
+    /// logical: what its layers draw, turned, or its whole clip when it blurs or glows.
+    pub(crate) fn effect_regions(&self) -> Vec<(effect::Group, Rectangle)> {
+        let extents = group_extents(&self.effects, self.layers.as_slice(), 1.0);
+        self.effects
+            .iter()
+            .zip(extents)
+            .map(|(group, extent)| {
+                let region = match extent {
+                    Some(extent) if is_tight(group) => group
+                        .clip
+                        .intersection(
+                            &extent
+                                .union(&turned(
+                                    extent,
+                                    effect_transform(group, 1.0),
+                                ))
+                                .expand(2.0),
+                        )
+                        .unwrap_or(Rectangle::new(
+                            group.clip.position(),
+                            Size::ZERO,
+                        )),
+                    _ => group.clip,
+                };
+                (group.clone(), region)
+            })
+            .collect()
     }
 
     /// pyzed: starts drawing a group of layers that is composited with `effect`.
@@ -254,8 +304,8 @@ fn draw_layer(
         return;
     };
 
-    engine::adjust_clip_mask(clip_mask, layer_bounds);
-
+    // pyzed: the clip mask is adjusted by whatever needs it (most of what is drawn is inside
+    // its clip bounds and draws without one).
     if !layer.quads.is_empty() {
         let render_span = debug::render(debug::Primitive::Quad);
         for (quad, background) in &layer.quads {
@@ -281,8 +331,6 @@ fn draw_layer(
                 continue;
             };
 
-            engine::adjust_clip_mask(clip_mask, group_bounds);
-
             for primitive in group.as_slice() {
                 engine.draw_primitive(
                     primitive,
@@ -293,8 +341,6 @@ fn draw_layer(
                     group_bounds,
                 );
             }
-
-            engine::adjust_clip_mask(clip_mask, layer_bounds);
         }
 
         render_span.finish();
@@ -326,8 +372,6 @@ fn draw_layer(
                 continue;
             };
 
-            engine::adjust_clip_mask(clip_mask, group_bounds);
-
             for text in group.as_slice() {
                 engine.draw_text(
                     text,
@@ -338,8 +382,6 @@ fn draw_layer(
                     group_bounds,
                 );
             }
-
-            engine::adjust_clip_mask(clip_mask, layer_bounds);
         }
 
         render_span.finish();
@@ -353,6 +395,7 @@ fn composite(
     content: &mut tiny_skia::Pixmap,
     backdrop: Option<&tiny_skia::Pixmap>,
     group: &effect::Group,
+    extent: Option<Rectangle>,
     damage_bounds: Rectangle,
     scale_factor: f32,
 ) {
@@ -360,16 +403,10 @@ fn composite(
     else {
         return;
     };
-    engine::adjust_clip_mask(clip_mask, clip);
 
     let fx = &group.effect;
     let bounds = fx.bounds * scale_factor;
-    let center = bounds.center();
-    let transform = tiny_skia::Transform::from_rotate_at(
-        fx.rotation.to_degrees(),
-        center.x,
-        center.y,
-    );
+    let transform = effect_transform(group, scale_factor);
     let opacity = fx.opacity.clamp(0.0, 1.0);
     let (width, height) = (content.width(), content.height());
     let region = effect::region(group.clip * scale_factor, 0.0, width, height);
@@ -393,6 +430,7 @@ fn composite(
     }
 
     if let Some(backdrop) = backdrop {
+        engine::adjust_clip_mask(clip_mask, clip);
         let mut mask = clip_mask.clone();
         mask.intersect_path(
             &engine::rounded_rectangle(
@@ -427,33 +465,255 @@ fn composite(
     if let Some((light, intensity)) = light {
         let mut strength = intensity * opacity;
         while strength > 0.0 {
-            target.draw_pixmap(
-                0,
-                0,
+            draw_clipped(
+                target,
                 light.as_ref(),
-                &tiny_skia::PixmapPaint {
+                tiny_skia::PixmapPaint {
                     opacity: strength.min(1.0),
                     blend_mode: tiny_skia::BlendMode::Plus,
                     quality,
                 },
                 transform,
-                Some(clip_mask),
+                clip,
             );
             strength -= 1.0;
         }
     }
 
-    target.draw_pixmap(
-        0,
-        0,
+    // Without blur or bloom nothing is drawn beyond what the group drew, turned.
+    let drawn = match extent {
+        Some(extent) if is_tight(group) => {
+            match clip.intersection(&turned(extent, transform).expand(1.0)) {
+                Some(drawn) => drawn,
+                None => return,
+            }
+        }
+        _ => clip,
+    };
+
+    draw_clipped(
+        target,
         content.as_ref(),
-        &tiny_skia::PixmapPaint {
+        tiny_skia::PixmapPaint {
             opacity,
             blend_mode: tiny_skia::BlendMode::SourceOver,
             quality,
         },
         transform,
-        Some(clip_mask),
+        drawn,
+    );
+}
+
+/// pyzed: how the content of `group` is turned onto its target.
+fn effect_transform(
+    group: &effect::Group,
+    scale_factor: f32,
+) -> tiny_skia::Transform {
+    let center = (group.effect.bounds * scale_factor).center();
+    tiny_skia::Transform::from_rotate_at(
+        group.effect.rotation.to_degrees(),
+        center.x,
+        center.y,
+    )
+}
+
+/// pyzed: what each of `groups` draws (see `content_extent`), scaled; `None` when a group
+/// holds another one, which may turn its content beyond the layers.
+fn group_extents(
+    groups: &[effect::Group],
+    layers: &[Layer],
+    scale_factor: f32,
+) -> Vec<Option<Rectangle>> {
+    groups
+        .iter()
+        .enumerate()
+        .map(|(i, group)| {
+            let nested = groups.iter().enumerate().any(|(j, other)| {
+                j != i && group.start <= other.start && other.end <= group.end
+            });
+            if nested {
+                return None;
+            }
+            layers
+                .get(group.start..group.end.min(layers.len()))?
+                .iter()
+                .filter_map(|layer| content_extent(layer, scale_factor))
+                .reduce(|a, b| a.union(&b))
+        })
+        .collect()
+}
+
+/// pyzed: whether a group reads around what it draws (turned, blurred or glowing): it is
+/// drawn whole whenever part of it is.
+pub(crate) fn reads_around(group: &effect::Group) -> bool {
+    group.effect.rotation != 0.0 || !is_tight(group)
+}
+
+/// pyzed: whether a group draws only over what its layers drew (no blur, bloom or backdrop).
+fn is_tight(group: &effect::Group) -> bool {
+    let fx = &group.effect;
+    fx.blur <= 0.0
+        && fx.backdrop_blur <= 0.0
+        && fx.bloom.is_none_or(|bloom| bloom.intensity <= 0.0)
+}
+
+/// pyzed: the bounding box of `bounds` moved by `transform`.
+fn turned(bounds: Rectangle, transform: tiny_skia::Transform) -> Rectangle {
+    let mut points = [
+        tiny_skia::Point::from_xy(bounds.x, bounds.y),
+        tiny_skia::Point::from_xy(bounds.x + bounds.width, bounds.y),
+        tiny_skia::Point::from_xy(bounds.x, bounds.y + bounds.height),
+        tiny_skia::Point::from_xy(
+            bounds.x + bounds.width,
+            bounds.y + bounds.height,
+        ),
+    ];
+    transform.map_points(&mut points);
+    let (mut x0, mut y0) = (f32::INFINITY, f32::INFINITY);
+    let (mut x1, mut y1) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for point in points {
+        x0 = x0.min(point.x);
+        y0 = y0.min(point.y);
+        x1 = x1.max(point.x);
+        y1 = y1.max(point.y);
+    }
+    Rectangle {
+        x: x0,
+        y: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+    }
+}
+
+/// pyzed: where `layer` draws, physical: its quads (with their shadows), or its whole bounds
+/// when it has anything else.
+fn content_extent(layer: &Layer, scale_factor: f32) -> Option<Rectangle> {
+    let bounds = layer.bounds * scale_factor;
+    if !layer.primitives.is_empty()
+        || !layer.images.is_empty()
+        || !layer.text.is_empty()
+    {
+        return Some(bounds);
+    }
+    layer
+        .quads
+        .iter()
+        .map(|(quad, _)| {
+            let shadow = if quad.shadow.color.a > 0.0 {
+                quad.shadow.offset.x.abs().max(quad.shadow.offset.y.abs())
+                    + quad.shadow.blur_radius
+            } else {
+                0.0
+            };
+            quad.bounds.expand(shadow) * scale_factor
+        })
+        .reduce(|a, b| a.union(&b))?
+        .intersection(&bounds)
+}
+
+thread_local! {
+    /// pyzed: the pixmaps of finished effect groups, drawn again by the next ones.
+    static EFFECT_PIXMAPS: std::cell::RefCell<Vec<tiny_skia::Pixmap>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// pyzed: a transparent pixmap for the content of `group`: a used one when there is one of the
+/// size, cleared only where the group draws and is read (a new one each time cost a whole
+/// window of memory per group, per frame).
+fn effect_pixmap(
+    width: u32,
+    height: u32,
+    group: &effect::Group,
+    extent: Option<Rectangle>,
+    damage_bounds: Rectangle,
+    scale_factor: f32,
+) -> tiny_skia::Pixmap {
+    let used = EFFECT_PIXMAPS.with_borrow_mut(|pool| {
+        let index = pool
+            .iter()
+            .position(|p| p.width() == width && p.height() == height)?;
+        Some(pool.swap_remove(index))
+    });
+    let Some(mut pixmap) = used else {
+        return tiny_skia::Pixmap::new(width, height)
+            .expect("Create effect pixmap");
+    };
+
+    // Outside the damage nothing is drawn into it, nor composited.
+    if !(group.clip * scale_factor).intersects(&damage_bounds) {
+        return pixmap;
+    }
+
+    match extent.filter(|_| is_tight(group)) {
+        Some(extent) => {
+            // What composite reads: the turned extent, turned back (a turned key reads
+            // around its corners).
+            let turn = effect_transform(group, scale_factor);
+            let read = match turn.invert() {
+                Some(back) => {
+                    turned(turned(extent, turn).expand(1.0), back).expand(2.0)
+                }
+                None => Rectangle::new(
+                    Point::ORIGIN,
+                    Size::new(width as f32, height as f32),
+                ),
+            };
+            clear_rect(&mut pixmap, read);
+        }
+        None => pixmap.fill(tiny_skia::Color::TRANSPARENT),
+    }
+
+    pixmap
+}
+
+/// pyzed: makes the pixels of `pixmap` inside `bounds` transparent.
+fn clear_rect(pixmap: &mut tiny_skia::Pixmap, bounds: Rectangle) {
+    let (width, height) = (pixmap.width() as usize, pixmap.height() as usize);
+    let x0 = (bounds.x.floor().max(0.0) as usize).min(width);
+    let x1 = ((bounds.x + bounds.width).ceil().max(0.0) as usize).min(width);
+    let y0 = (bounds.y.floor().max(0.0) as usize).min(height);
+    let y1 = ((bounds.y + bounds.height).ceil().max(0.0) as usize).min(height);
+    if x0 >= x1 {
+        return;
+    }
+    let data = pixmap.data_mut();
+    for y in y0..y1 {
+        data[(y * width + x0) * 4..(y * width + x1) * 4].fill(0);
+    }
+}
+
+/// pyzed: draws `pixmap` (as large as `target`) through the rectangle `clip` only: drawn whole
+/// with a clip mask, every effect group cost every pixel of the window.
+fn draw_clipped(
+    target: &mut tiny_skia::PixmapMut<'_>,
+    pixmap: tiny_skia::PixmapRef<'_>,
+    paint: tiny_skia::PixmapPaint,
+    transform: tiny_skia::Transform,
+    clip: Rectangle,
+) {
+    let clip = engine::snap_to_pixels(clip);
+    let Some(rect) =
+        tiny_skia::Rect::from_xywh(clip.x, clip.y, clip.width, clip.height)
+    else {
+        return;
+    };
+
+    target.fill_rect(
+        rect,
+        &tiny_skia::Paint {
+            shader: tiny_skia::Pattern::new(
+                pixmap,
+                tiny_skia::SpreadMode::Pad,
+                paint.quality,
+                paint.opacity,
+                transform,
+            ),
+            blend_mode: paint.blend_mode,
+            anti_alias: false,
+            ..tiny_skia::Paint::default()
+        },
+        tiny_skia::Transform::identity(),
+        None,
     );
 }
 
