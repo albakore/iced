@@ -153,12 +153,26 @@ impl Engine {
                 .into_iter()
                 .map(|radius| radius * transformation.scale_factor())
                 .collect::<Vec<_>>();
-            let (x, y, width, height) = (
-                shadow_bounds.x as u32,
-                shadow_bounds.y as u32,
-                shadow_bounds.width as u32,
-                shadow_bounds.height as u32,
+            // pyzed: only the part of the shadow inside the clip bounds (the damaged region of
+            // the frame) is computed; a dialog's shadow was computed whole, pixel by pixel, on
+            // every frame a hover changed anything in front of it.
+            let (x, y) = (shadow_bounds.x as u32, shadow_bounds.y as u32);
+            let (right, bottom) = (
+                x + shadow_bounds.width as u32,
+                y + shadow_bounds.height as u32,
             );
+            let (x, y, right, bottom) = (
+                x.max(clip_bounds.x.max(0.0).floor() as u32),
+                y.max(clip_bounds.y.max(0.0).floor() as u32),
+                right
+                    .min((clip_bounds.x + clip_bounds.width).max(0.0).ceil()
+                        as u32),
+                bottom
+                    .min((clip_bounds.y + clip_bounds.height).max(0.0).ceil()
+                        as u32),
+            );
+            let (width, height) =
+                (right.saturating_sub(x), bottom.saturating_sub(y));
             let half_width = physical_bounds.width / 2.0;
             let half_height = physical_bounds.height / 2.0;
 

@@ -186,7 +186,17 @@ pub fn present(
                 let mut damage = damage::diff(
                     last_layers,
                     renderer.layers(),
-                    |layer| vec![layer.bounds],
+                    // pyzed: a layer that comes or goes (an overlay spans the whole
+                    // window) damages only what it draws.
+                    |layer| {
+                        Layer::damage(
+                            &Layer {
+                                bounds: layer.bounds,
+                                ..Layer::default()
+                            },
+                            layer,
+                        )
+                    },
                     Layer::damage,
                 );
                 effect_damage(&mut damage, last_regions, &regions);

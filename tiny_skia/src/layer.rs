@@ -290,6 +290,17 @@ impl Layer {
                         && bounds_a == bounds_b
                         && transformation_a == transformation_b
                 }
+                // pyzed: canvases without a cache draw their shapes again every frame;
+                // unchanged shapes do not need to be painted again.
+                (Item::Live(a), Item::Live(b)) => a == b,
+                (
+                    Item::Group(group_a, bounds_a, transformation_a),
+                    Item::Group(group_b, bounds_b, transformation_b),
+                ) => {
+                    bounds_a == bounds_b
+                        && transformation_a == transformation_b
+                        && group_a == group_b
+                }
                 _ => false,
             },
         );

@@ -97,11 +97,21 @@ impl Text {
             Text::Cached {
                 bounds,
                 clip_bounds,
+                align_x,
                 align_y,
                 line_height,
                 ..
             } => {
                 let height = bounds.height.max(f32::from(*line_height));
+                // pyzed: centered and right-aligned text is drawn left of `bounds.x` (what it
+                // left on screen when it changed was never repainted).
+                let x = match align_x {
+                    Alignment::Center => bounds.x - bounds.width / 2.0,
+                    Alignment::Right => bounds.x - bounds.width,
+                    Alignment::Default
+                    | Alignment::Left
+                    | Alignment::Justified => bounds.x,
+                };
                 let y = match align_y {
                     alignment::Vertical::Top => bounds.y,
                     alignment::Vertical::Center => bounds.y - height / 2.0,
@@ -109,7 +119,7 @@ impl Text {
                 };
 
                 Rectangle::new(
-                    Point::new(bounds.x, y),
+                    Point::new(x, y),
                     Size::new(bounds.width, height),
                 )
                 .expand(1.0)
@@ -133,6 +143,35 @@ mod tests {
             width: 1000.0,
             height: 1000.0,
         }
+    }
+
+    #[test]
+    fn cached_centered_and_right_aligned_visible_bounds_end_left_of_the_anchor()
+    {
+        let text = |align_x| Text::Cached {
+            content: "1234".to_string(),
+            bounds: Rectangle {
+                x: 100.0,
+                y: 0.0,
+                width: 40.0,
+                height: 20.0,
+            },
+            color: Color::BLACK,
+            size: Pixels(16.0),
+            line_height: Pixels(20.0),
+            font: Font::DEFAULT,
+            align_x,
+            align_y: alignment::Vertical::Top,
+            shaping: Shaping::Basic,
+            letter_spacing: crate::core::Em::ZERO,
+            clip_bounds: viewport(),
+        };
+
+        let center = text(Alignment::Center).visible_bounds().unwrap();
+        assert!(center.x <= 80.0 && center.x + center.width >= 120.0);
+
+        let right = text(Alignment::Right).visible_bounds().unwrap();
+        assert!(right.x <= 60.0 && right.x + right.width >= 100.0);
     }
 
     #[test]
