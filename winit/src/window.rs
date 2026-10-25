@@ -69,6 +69,17 @@ impl Pacing {
     }
 }
 
+/// pyzed: the time between two refreshes of the monitor of `window` (60 Hz when unknown).
+fn refresh_interval(window: &winit::window::Window) -> Duration {
+    window
+        .current_monitor()
+        .and_then(|monitor| monitor.refresh_rate_millihertz())
+        .filter(|millihertz| *millihertz >= 20_000)
+        .map_or(Duration::from_micros(16_667), |millihertz| {
+            Duration::from_secs_f64(1000.0 / f64::from(millihertz))
+        })
+}
+
 impl<P, C> WindowManager<P, C>
 where
     P: Program,
@@ -97,6 +108,7 @@ where
         exit_on_close_request: bool,
         system_theme: theme::Mode,
     ) -> &mut Window<P, C> {
+        let refresh = refresh_interval(&window);
         let state = State::new(program, id, &window, system_theme);
         let focused = window.has_focus();
         let surface_size = state.physical_size();
@@ -122,6 +134,7 @@ where
                 mouse_interaction: mouse::Interaction::None,
                 redraw_at: None,
                 pacing: self.pacing,
+                refresh,
                 focused,
                 occluded: false,
                 deferred: false,
@@ -223,6 +236,9 @@ where
     pub redraw_at: Option<Instant>,
     /// pyzed: the frame rate limits of its animations.
     pacing: Pacing,
+    /// pyzed: the refresh interval of its monitor, the frame rate limit when none was set:
+    /// renderers that do not wait for the screen (the software one) drew as fast as they could.
+    refresh: Duration,
     /// pyzed: whether it has the keyboard focus (for the background frame rate).
     pub focused: bool,
     /// pyzed: whether another window or the screen saver covers it whole; it does not draw.
@@ -263,13 +279,14 @@ where
 
     pub fn request_redraw(&mut self, redraw_request: RedrawRequest) {
         // pyzed: the frames that animations ask for wait for the frame rate limit
+        let focused = Some(self.pacing.focused.unwrap_or(self.refresh));
         let limit = if self.focused {
-            Limit::Every(self.pacing.focused)
+            Limit::Every(focused)
         } else {
             match self.pacing.background {
                 Some(Some(interval)) => Limit::Every(Some(interval)),
                 Some(None) => Limit::Paused,
-                None => Limit::Every(self.pacing.focused),
+                None => Limit::Every(focused),
             }
         };
 

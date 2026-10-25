@@ -1097,8 +1097,14 @@ async fn run_instance<P>(
                                 window.state.surface_version();
                         }
 
+                        // pyzed: the frame starts now; the next one the frame rate limit
+                        // allows counts from here (counting from the last present let a
+                        // second frame follow right after each one).
+                        let frame = Instant::now();
+                        window.last_frame = Some(frame);
+
                         let redraw_event = core::Event::Window(
-                            window::Event::RedrawRequested(Instant::now()),
+                            window::Event::RedrawRequested(frame),
                         );
 
                         let cursor = window.state.cursor();
@@ -1279,8 +1285,6 @@ async fn run_instance<P>(
                         let Some(surface) = window.surface.as_mut() else {
                             continue;
                         };
-
-                        window.last_frame = Some(Instant::now());
 
                         match current_compositor.present(
                             &mut window.renderer,
