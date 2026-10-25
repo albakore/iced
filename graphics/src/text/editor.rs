@@ -96,6 +96,10 @@ impl editor::Editor for Editor {
         let mut font_system =
             text::font_system().write().expect("Write font system");
 
+        // pyzed: nothing is shaped yet; `update` sets the font, the size and the bounds (the
+        // lines were shaped twice, the first time with a font they never use).
+        buffer.set_size(font_system.raw(), None, Some(0.0));
+
         buffer.set_text(
             font_system.raw(),
             text,
