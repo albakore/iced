@@ -53,6 +53,9 @@ changes iced.
   are not repainted, and box shadows are computed only where the frame repaints.
 - Without a frame rate limit, animation frames wait for the refresh rate of the window's monitor
   (the software renderer, which does not wait for vsync, drew as fast as it could).
+- `text_editor::Content::perform_ref` applies an action through a shared reference, so a widget
+  that wraps an editor can apply a selection drag right away instead of rebuilding the app's view
+  on every mouse move.
 
 ## Community pull requests (81)
 

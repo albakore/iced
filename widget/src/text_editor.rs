@@ -427,6 +427,19 @@ where
         internal.editor.perform(action);
     }
 
+    /// Performs an [`Action`] on the [`Content`] through a shared reference.
+    ///
+    /// This lets a widget that only borrows the [`Content`] apply an action
+    /// right away (like a selection drag) instead of publishing it and
+    /// waiting for the application to rebuild its view.
+    ///
+    /// # Panics
+    /// If the [`Content`] is borrowed elsewhere at the same time.
+    // pyzed: an action without `&mut` (a selection drag applied by a wrapper widget).
+    pub fn perform_ref(&self, action: Action) {
+        self.0.borrow_mut().editor.perform(action);
+    }
+
     /// Moves the current cursor to reflect the given one.
     pub fn move_to(&mut self, cursor: Cursor) {
         let internal = self.0.get_mut();
