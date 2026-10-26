@@ -435,6 +435,7 @@ where
     ///
     /// # Panics
     /// If the [`Content`] is borrowed elsewhere at the same time.
+    // pyzed: an action without `&mut` (a selection drag applied by a wrapper widget).
     pub fn perform_ref(&self, action: Action) {
         self.0.borrow_mut().editor.perform(action);
     }
