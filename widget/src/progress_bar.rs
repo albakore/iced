@@ -61,6 +61,8 @@ where
     length: Length,
     girth: Length,
     is_vertical: bool,
+    // pyzed: a horizontal bar fills from the right (right-to-left layouts).
+    is_rtl: bool,
     class: Theme::Class<'a>,
 }
 
@@ -83,6 +85,7 @@ where
             length: Length::Fill,
             girth: Length::from(Self::DEFAULT_GIRTH),
             is_vertical: false,
+            is_rtl: false,
             class: Theme::default(),
         }
     }
@@ -104,6 +107,13 @@ where
     /// By default, a [`ProgressBar`] is horizontal.
     pub fn vertical(mut self) -> Self {
         self.is_vertical = true;
+        self
+    }
+
+    /// pyzed: makes a horizontal [`ProgressBar`] fill from the right, for right-to-left
+    /// layouts (Arabic, Hebrew...).
+    pub fn rtl(mut self, rtl: bool) -> Self {
+        self.is_rtl = rtl;
         self
     }
 
@@ -205,6 +215,12 @@ where
                 Rectangle {
                     y: bounds.y + bounds.height - active_progress_length,
                     height: active_progress_length,
+                    ..bounds
+                }
+            } else if self.is_rtl {
+                Rectangle {
+                    x: bounds.x + bounds.width - active_progress_length,
+                    width: active_progress_length,
                     ..bounds
                 }
             } else {

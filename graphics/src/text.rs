@@ -311,21 +311,91 @@ pub fn tab_width() -> u16 {
     TAB_WIDTH.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+// pyzed: families tried first for the characters of a script that the requested font lacks.
+static PREFERRED_FALLBACKS: RwLock<
+    Vec<(unicode_script::Script, &'static str)>,
+> = RwLock::new(Vec::new());
+
+/// pyzed: tries `family` first when a font lacks the characters of `script`, an ISO 15924
+/// code such as `"Arab"` or `"Hebr"` (before the platform's fallback fonts). Call it before
+/// the first text is laid out: each script's list is read once. Returns `false` for an
+/// unknown script.
+pub fn prefer_fallback(script: &str, family: &'static str) -> bool {
+    let Some(script) = unicode_script::Script::from_short_name(script) else {
+        return false;
+    };
+    let mut preferred = PREFERRED_FALLBACKS
+        .write()
+        .expect("preferred fallbacks lock");
+    if !preferred.contains(&(script, family)) {
+        preferred.push((script, family));
+    }
+    true
+}
+
+/// pyzed: the platform's fallback lists with the families of [`prefer_fallback`] first.
+struct PreferredFallback;
+
+impl cosmic_text::Fallback for PreferredFallback {
+    fn common_fallback(&self) -> &[&'static str] {
+        cosmic_text::PlatformFallback.common_fallback()
+    }
+
+    fn forbidden_fallback(&self) -> &[&'static str] {
+        cosmic_text::PlatformFallback.forbidden_fallback()
+    }
+
+    fn script_fallback(
+        &self,
+        script: unicode_script::Script,
+        locale: &str,
+    ) -> &[&'static str] {
+        let platform =
+            cosmic_text::PlatformFallback.script_fallback(script, locale);
+        let preferred: Vec<&'static str> = PREFERRED_FALLBACKS
+            .read()
+            .expect("preferred fallbacks lock")
+            .iter()
+            .filter(|(s, _)| *s == script)
+            .map(|(_, family)| *family)
+            .collect();
+        if preferred.is_empty() {
+            return platform;
+        }
+        // Each script is asked for once per font system, so leaking its list is bounded.
+        let rest: Vec<&'static str> = platform
+            .iter()
+            .filter(|family| !preferred.contains(family))
+            .copied()
+            .collect();
+        Vec::leak([preferred, rest].concat())
+    }
+}
+
 /// Returns the global [`FontSystem`].
 pub fn font_system() -> &'static RwLock<FontSystem> {
     static FONT_SYSTEM: OnceLock<RwLock<FontSystem>> = OnceLock::new();
 
     FONT_SYSTEM.get_or_init(|| {
+        let platform = cosmic_text::FontSystem::new_with_fonts([
+            cosmic_text::fontdb::Source::Binary(Arc::new(
+                include_bytes!("../fonts/Iced-Icons.ttf").as_slice(),
+            )),
+            #[cfg(feature = "fira-sans")]
+            cosmic_text::fontdb::Source::Binary(Arc::new(
+                include_bytes!("../fonts/FiraSans-Regular.ttf").as_slice(),
+            )),
+        ]);
+        // pyzed: the same fonts and locale, with the preferred fallbacks first.
+        let (locale, db) = platform.into_locale_and_db();
+        let raw = cosmic_text::FontSystem::new_with_locale_and_db_and_fallback(
+            locale,
+            db,
+            PreferredFallback,
+        );
+
         RwLock::new(FontSystem {
-            raw: cosmic_text::FontSystem::new_with_fonts([
-                cosmic_text::fontdb::Source::Binary(Arc::new(
-                    include_bytes!("../fonts/Iced-Icons.ttf").as_slice(),
-                )),
-                #[cfg(feature = "fira-sans")]
-                cosmic_text::fontdb::Source::Binary(Arc::new(
-                    include_bytes!("../fonts/FiraSans-Regular.ttf").as_slice(),
-                )),
-            ]),
+            raw,
             loaded_fonts: HashSet::new(),
             version: Version::default(),
         })
@@ -436,7 +506,9 @@ pub fn align(
 
             needs_relayout = true;
         } else if let Some(line) = buffer.lines.first_mut() {
-            needs_relayout = line.set_align(None);
+            // pyzed: keep the relayout a right-to-left line needs (Arabic, Hebrew): without it
+            // the line stayed laid out in the full width and was drawn far to the right.
+            needs_relayout |= line.set_align(None);
         }
     }
 
