@@ -49,6 +49,12 @@ impl Node {
         &self.children
     }
 
+    /// pyzed: returns the children of the [`Node`] to move them (right-to-left layouts
+    /// mirror them in place).
+    pub fn children_mut(&mut self) -> &mut [Node] {
+        &mut self.children
+    }
+
     /// Aligns the [`Node`] in the given space.
     pub fn align(
         mut self,

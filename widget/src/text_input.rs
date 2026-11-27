@@ -626,13 +626,15 @@ where
                             right,
                         );
 
-                    let width = right_position - left_position;
+                    // pyzed: in right-to-left text the logical start is on the right.
+                    let width = (right_position - left_position).abs();
 
                     (
                         Some((
                             renderer::Quad {
                                 bounds: Rectangle {
-                                    x: text_bounds.x + left_position,
+                                    x: text_bounds.x
+                                        + left_position.min(right_position),
                                     y: text_bounds.y,
                                     width,
                                     height: text_bounds.height,
@@ -862,7 +864,7 @@ where
                             } else {
                                 None
                             }
-                            .unwrap_or(0);
+                            .unwrap_or_else(|| line_start(&self.value));
 
                             if state.keyboard_modifiers.shift() {
                                 state.cursor.select_range(
@@ -952,7 +954,7 @@ where
                         state,
                         target,
                     )
-                    .unwrap_or(0);
+                    .unwrap_or_else(|| line_start(&value));
 
                     let selection_before = state.cursor.selection(&value);
 
@@ -1137,6 +1139,24 @@ where
                     #[cfg(target_os = "macos")]
                     let modified_key =
                         macos_shortcut.as_ref().unwrap_or(modified_key);
+
+                    // pyzed: in a right-to-left line (Arabic, Hebrew...) the arrows move the
+                    // cursor the way they point: Left goes forward in the text.
+                    let mirrored = match modified_key.as_ref() {
+                        keyboard::Key::Named(key::Named::ArrowLeft)
+                            if starts_right_to_left(&self.value) =>
+                        {
+                            Some(keyboard::Key::Named(key::Named::ArrowRight))
+                        }
+                        keyboard::Key::Named(key::Named::ArrowRight)
+                            if starts_right_to_left(&self.value) =>
+                        {
+                            Some(keyboard::Key::Named(key::Named::ArrowLeft))
+                        }
+                        _ => None,
+                    };
+                    let modified_key =
+                        mirrored.as_ref().unwrap_or(modified_key);
 
                     match modified_key.as_ref() {
                         keyboard::Key::Named(key::Named::Enter) => {
@@ -1739,20 +1759,50 @@ fn find_cursor_position<P: text::Paragraph>(
     let offset = offset(text_bounds, value, state);
     let value = value.to_string();
 
-    let char_offset = state
+    // pyzed: the hit is a byte offset into the text (cosmic-text's cursor index), not a
+    // character count: with non-ASCII text (accents, Arabic, Hebrew...) the cursor landed
+    // after the character clicked.
+    let byte_offset = state
         .value
         .raw()
         .hit_test(Point::new(x + offset, text_bounds.height / 2.0))
         .map(text::Hit::cursor)?;
 
-    Some(grapheme_offset_from_char_offset(&value, char_offset))
+    Some(grapheme_offset_from_byte_offset(&value, byte_offset))
 }
 
-fn grapheme_offset_from_char_offset(value: &str, char_offset: usize) -> usize {
-    let byte_offset = value
-        .char_indices()
-        .nth(char_offset)
-        .map_or(value.len(), |(index, _)| index);
+/// pyzed: the cursor position on the left of the text: its start, or its end in a right-to-left
+/// line (a click in the empty space left of a right-aligned Hebrew word put the cursor at its start).
+fn line_start(value: &Value) -> usize {
+    if starts_right_to_left(value) {
+        value.len()
+    } else {
+        0
+    }
+}
+
+/// pyzed: whether the first letter with a direction in `value` is right to left (Hebrew,
+/// Arabic, Syriac, Thaana, N'Ko and their presentation forms), so the line reads from the right.
+fn starts_right_to_left(value: &Value) -> bool {
+    let is_rtl = |c: char| {
+        matches!(
+            c as u32,
+            0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF | 0x10800..=0x10FFF | 0x1E800..=0x1EFFF
+        )
+    };
+
+    value
+        .to_string()
+        .chars()
+        .find(|&c| is_rtl(c) || c.is_alphabetic())
+        .is_some_and(is_rtl)
+}
+
+fn grapheme_offset_from_byte_offset(value: &str, byte_offset: usize) -> usize {
+    let mut byte_offset = byte_offset.min(value.len());
+    while !value.is_char_boundary(byte_offset) {
+        byte_offset -= 1;
+    }
 
     unicode_segmentation::UnicodeSegmentation::graphemes(
         &value[..byte_offset],
@@ -1920,18 +1970,37 @@ fn alignment_offset(
 
 #[cfg(test)]
 mod tests {
-    use super::grapheme_offset_from_char_offset;
+    use super::{
+        Value, grapheme_offset_from_byte_offset, starts_right_to_left,
+    };
 
     #[test]
-    fn grapheme_offset_handles_secure_mask_char_offsets() {
+    fn right_to_left_lines_start_with_a_right_to_left_letter() {
+        assert!(starts_right_to_left(&Value::new("שלום world")));
+        assert!(starts_right_to_left(&Value::new("123 سلام")));
+        assert!(!starts_right_to_left(&Value::new("Pyzed سلام")));
+        assert!(!starts_right_to_left(&Value::new("")));
+    }
+
+    #[test]
+    fn grapheme_offset_handles_secure_mask_byte_offsets() {
+        // "•" takes 3 bytes.
         let secure_value = "•".repeat(10);
 
-        assert_eq!(grapheme_offset_from_char_offset(&secure_value, 0), 0);
-        assert_eq!(grapheme_offset_from_char_offset(&secure_value, 1), 1);
-        assert_eq!(grapheme_offset_from_char_offset(&secure_value, 2), 2);
-        assert_eq!(grapheme_offset_from_char_offset(&secure_value, 3), 3);
-        assert_eq!(grapheme_offset_from_char_offset(&secure_value, 8), 8);
-        assert_eq!(grapheme_offset_from_char_offset(&secure_value, 10), 10);
-        assert_eq!(grapheme_offset_from_char_offset(&secure_value, 69), 10);
+        assert_eq!(grapheme_offset_from_byte_offset(&secure_value, 0), 0);
+        assert_eq!(grapheme_offset_from_byte_offset(&secure_value, 3), 1);
+        assert_eq!(grapheme_offset_from_byte_offset(&secure_value, 4), 1);
+        assert_eq!(grapheme_offset_from_byte_offset(&secure_value, 9), 3);
+        assert_eq!(grapheme_offset_from_byte_offset(&secure_value, 24), 8);
+        assert_eq!(grapheme_offset_from_byte_offset(&secure_value, 30), 10);
+        assert_eq!(grapheme_offset_from_byte_offset(&secure_value, 69), 10);
+    }
+
+    #[test]
+    fn grapheme_offset_handles_right_to_left_text() {
+        // Arabic and Hebrew letters take 2 bytes each.
+        assert_eq!(grapheme_offset_from_byte_offset("سلام", 4), 2);
+        assert_eq!(grapheme_offset_from_byte_offset("שלום עולם", 9), 5);
+        assert_eq!(grapheme_offset_from_byte_offset("año", 3), 2);
     }
 }

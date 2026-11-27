@@ -366,41 +366,66 @@ impl core::text::Paragraph for Paragraph {
 
         let run = self.internal().buffer.layout_runs().nth(line)?;
 
-        // index represents a grapheme, not a glyph
-        // Let's find the first glyph for the given grapheme cluster
-        let mut last_start = None;
-        let mut last_grapheme_count = 0;
-        let mut graphemes_seen = 0;
+        // pyzed: `index` counts graphemes in logical order from the start of the run, but
+        // the glyphs are in visual order: right-to-left runs (Arabic, Hebrew) come reversed.
+        // Find the cluster that holds the grapheme, then the edge of it on the side the text
+        // flows from: the left for left-to-right glyphs, the right for right-to-left ones.
+        let first = run.glyphs.iter().map(|glyph| glyph.start).min()?;
+        let last = run.glyphs.iter().map(|glyph| glyph.end).max()?;
+        let text = &run.text[first..last];
+        let byte = first
+            + text
+                .grapheme_indices(false)
+                .nth(index)
+                .map_or(text.len(), |(at, _)| at);
 
-        let glyph = run
-            .glyphs
-            .iter()
-            .find(|glyph| {
-                if Some(glyph.start) != last_start {
-                    last_grapheme_count = run.text[glyph.start..glyph.end]
-                        .graphemes(false)
-                        .count();
-                    last_start = Some(glyph.start);
-                    graphemes_seen += last_grapheme_count;
-                }
-
-                graphemes_seen >= index
-            })
-            .or_else(|| run.glyphs.last())?;
-
-        let advance = if index == 0 {
-            0.0
-        } else {
-            glyph.w
-                * (1.0
-                    - graphemes_seen.saturating_sub(index) as f32
-                        / last_grapheme_count.max(1) as f32)
+        let cluster = |start: usize, end: usize| {
+            let glyphs = run
+                .glyphs
+                .iter()
+                .filter(move |glyph| glyph.start == start && glyph.end == end);
+            let left = glyphs
+                .clone()
+                .map(|glyph| glyph.x + glyph.x_offset * glyph.font_size)
+                .fold(f32::INFINITY, f32::min);
+            let right = glyphs
+                .map(|glyph| {
+                    glyph.x + glyph.x_offset * glyph.font_size + glyph.w
+                })
+                .fold(f32::NEG_INFINITY, f32::max);
+            (left, right)
         };
 
-        Some(Point::new(
-            glyph.x + glyph.x_offset * glyph.font_size + advance,
-            glyph.y - glyph.y_offset * glyph.font_size,
-        ))
+        let (glyph, x) = match run
+            .glyphs
+            .iter()
+            .find(|glyph| glyph.start <= byte && byte < glyph.end)
+        {
+            Some(glyph) => {
+                let graphemes = run.text[glyph.start..glyph.end]
+                    .graphemes(false)
+                    .count()
+                    .max(1);
+                let before =
+                    run.text[glyph.start..byte].graphemes(false).count();
+                let fraction = before as f32 / graphemes as f32;
+                let (left, right) = cluster(glyph.start, glyph.end);
+                let x = if glyph.level.is_rtl() {
+                    right - (right - left) * fraction
+                } else {
+                    left + (right - left) * fraction
+                };
+                (glyph, x)
+            }
+            // After the last grapheme: the far edge of the last cluster in logical order.
+            None => {
+                let glyph = run.glyphs.iter().max_by_key(|glyph| glyph.end)?;
+                let (left, right) = cluster(glyph.start, glyph.end);
+                (glyph, if glyph.level.is_rtl() { left } else { right })
+            }
+        };
+
+        Some(Point::new(x, glyph.y - glyph.y_offset * glyph.font_size))
     }
 }
 
@@ -481,6 +506,73 @@ impl PartialEq for Weak {
         match (self.raw.upgrade(), other.raw.upgrade()) {
             (Some(p1), Some(p2)) => p1 == p2,
             _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Paragraph;
+    use crate::core::text::{
+        self, Alignment, LineHeight, Paragraph as _, Shaping, Wrapping,
+    };
+    use crate::core::{Em, Font, Pixels, Size, alignment};
+
+    fn paragraph(content: &str) -> Paragraph {
+        aligned(content, Size::INFINITE, Alignment::Default)
+    }
+
+    fn aligned(content: &str, bounds: Size, align_x: Alignment) -> Paragraph {
+        Paragraph::with_text(text::Text {
+            content,
+            bounds,
+            size: Pixels(16.0),
+            line_height: LineHeight::default(),
+            font: Font::DEFAULT,
+            align_x,
+            align_y: alignment::Vertical::Top,
+            shaping: Shaping::Advanced,
+            wrapping: Wrapping::None,
+            letter_spacing: Em::ZERO,
+        })
+    }
+
+    fn xs(paragraph: &Paragraph, graphemes: usize) -> Vec<f32> {
+        (0..=graphemes)
+            .map(|index| paragraph.grapheme_position(0, index).unwrap().x)
+            .collect()
+    }
+
+    #[test]
+    fn grapheme_positions_go_right_in_left_to_right_text() {
+        let positions = xs(&paragraph("abcd"), 4);
+
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn grapheme_positions_go_left_in_right_to_left_text() {
+        // Hebrew without joining: the first letter is drawn on the right.
+        let positions = xs(&paragraph("שלום"), 4);
+
+        assert!(
+            positions.windows(2).all(|pair| pair[0] > pair[1]),
+            "{positions:?}"
+        );
+        assert!(positions[4].abs() < 0.5, "{positions:?}");
+    }
+
+    #[test]
+    fn aligned_right_to_left_line_stays_in_its_bounds() {
+        for align in [Alignment::Left, Alignment::Center, Alignment::Right] {
+            let paragraph = aligned("שלום", Size::new(500.0, 100.0), align);
+            let width = paragraph.min_bounds().width;
+            let positions = xs(&paragraph, 4);
+
+            assert!(
+                positions.iter().all(|x| *x >= -0.5 && *x <= width + 0.5),
+                "{align:?}: {positions:?} outside 0..{width}"
+            );
         }
     }
 }

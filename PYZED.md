@@ -56,6 +56,14 @@ changes iced.
 - `text_editor::Content::perform_ref` applies an action through a shared reference, so a widget
   that wraps an editor can apply a selection drag right away instead of rebuilding the app's view
   on every mouse move.
+- Right-to-left text (Pyzed's RTL layouts): `text::prefer_fallback(script, family)` puts a
+  family first in the font fallback of a script (Pyzed bundles Plex Sans Arabic and Hebrew);
+  `grapheme_position` follows the direction of each run; `text_input` maps clicks from byte
+  offsets, swaps the arrow keys in a line that starts right to left, puts the cursor at the end
+  of such a line when the click falls left of it and draws selections that run leftwards;
+  `progress_bar::rtl` fills from the right; `layout::Node::children_mut` lets a widget mirror its
+  children. Fixed: a single-line right-to-left text with an explicit alignment was drawn far right
+  of its bounds (`align()` overwrote `needs_relayout`).
 
 ## Community pull requests (81)
 
